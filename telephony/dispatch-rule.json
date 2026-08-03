@@ -1,0 +1,16 @@
+{
+  "dispatch_rule": {
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "call-"
+      }
+    },
+    "trunkIds": ["<INBOUND_TRUNK_ID_FROM_lk_sip_inbound_create>"],
+    "name": "The Real Estate Group - Inbound Dispatch",
+    "roomConfig": {
+      "agents": [
+        {"agentName": "the-real-estate-group-agent"}
+      ]
+    }
+  }
+}

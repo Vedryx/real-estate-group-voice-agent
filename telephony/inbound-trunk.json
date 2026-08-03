@@ -1,0 +1,8 @@
+{
+  "trunk": {
+    "name": "The Real Estate Group - Telnyx Inbound",
+    "numbers": ["+91XXXXXXXXXX"],
+    "authUsername": "<TELNYX_FQDN_CONNECTION_USERNAME>",
+    "authPassword": "<TELNYX_FQDN_CONNECTION_PASSWORD>"
+  }
+}

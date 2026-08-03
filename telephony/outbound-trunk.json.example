@@ -1,0 +1,13 @@
+{
+  "_comment": "NOT part of v1 (inbound-only per plan.md §3.1 step 5). Needed later for the 'agent calls back to confirm site visit' use case. Rename to outbound-trunk.json and fill in once outbound calling is legally signed off (plan.md §9.4 - confirm VJ's TRAI DLT/NDNC compliance posture before enabling).",
+  "trunk": {
+    "name": "VJ Real Estate - Telnyx Outbound",
+    "address": "sip.telnyx.com",
+    "numbers": ["+91XXXXXXXXXX"],
+    "authUsername": "<TELNYX_FQDN_CONNECTION_USERNAME>",
+    "authPassword": "<TELNYX_FQDN_CONNECTION_PASSWORD>",
+    "headersToAttributes": {
+      "X-Telnyx-Username": "<TELNYX_FQDN_CONNECTION_USERNAME>"
+    }
+  }
+}
