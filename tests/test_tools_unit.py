@@ -33,6 +33,52 @@ async def test_search_projects_filters_by_city_bhk_budget(ctx):
     assert "lodha-panache" not in ids  # cheapest 2BHK there is 130L
 
 
+async def test_search_projects_filters_by_developer(ctx):
+    result = await catalog.search_projects(
+        ctx,
+        city="Pune",
+        bhk="2BHK",
+        budget_max_lakh=72,
+        developer="Kolte Patil",
+    )
+
+    assert [match["id"] for match in result["matches"]] == [
+        "little-earth-kolte-patil"
+    ]
+    assert ctx.userdata.developer_preference == "Kolte Patil"
+
+
+async def test_search_projects_preserves_constraints_until_explicitly_relaxed(ctx):
+    first = await catalog.search_projects(
+        ctx,
+        city="Pune",
+        locality="Hinjewadi",
+        bhk="2BHK",
+        budget_max_lakh=72,
+        developer="Kolte Patil",
+    )
+    assert first["matches"] == []
+
+    still_constrained = await catalog.search_projects(ctx, city="Pune")
+    assert still_constrained["matches"] == []
+
+    broadened = await catalog.search_projects(
+        ctx, city="Pune", relax_locality=True
+    )
+    assert [match["id"] for match in broadened["matches"]] == [
+        "little-earth-kolte-patil"
+    ]
+
+
+async def test_search_summary_uses_requested_bhk_price(ctx):
+    result = await catalog.search_projects(
+        ctx, city="Pune", bhk="2BHK", developer="Lodha"
+    )
+    panache = next(match for match in result["matches"] if match["id"] == "lodha-panache")
+    assert panache["starting_price_inr_lakh"] == 130
+    assert panache["starting_price_display"] == "1 crore 30 lakh"
+
+
 async def test_search_projects_unserved_city(ctx):
     result = await catalog.search_projects(ctx, city="Chennai")
     assert result["served"] is False
@@ -112,3 +158,56 @@ async def test_log_lead_rejects_invalid_outcome(ctx):
 
     with pytest.raises(ToolError):
         await catalog.log_lead(ctx, outcome="not_a_real_outcome")
+
+
+async def test_record_qualification_and_site_visit_persist_hot_lead(
+    ctx, tmp_path, monkeypatch
+):
+    from agent import data_store as ds
+    import json
+
+    monkeypatch.setattr(ds, "LEADS_LOG_PATH", tmp_path / "leads.jsonl")
+    await catalog.record_lead_qualification(
+        ctx,
+        interest_status="active",
+        purchase_timeline="within_3_months",
+        purchase_purpose="self_use",
+    )
+    await catalog.search_projects(
+        ctx, city="Pune", bhk="2BHK", budget_max_lakh=90
+    )
+    result = await catalog.schedule_site_visit(
+        ctx,
+        project_id="aikyam",
+        preferred_date="Saturday afternoon",
+        name="Test User",
+        phone="+919812345678",
+    )
+
+    assert result["status"] == "requested_pending_human_confirmation"
+    assert result["qualification"]["lead_temperature"] == "hot"
+    record = json.loads((tmp_path / "leads.jsonl").read_text().strip())
+    assert record["qualification_status"] == "qualified"
+    assert record["lead_temperature"] == "hot"
+    assert record["next_step"] == "site_visit_requested"
+
+
+async def test_opt_out_overrides_qualification_and_disables_contact(
+    ctx, tmp_path, monkeypatch
+):
+    from agent import data_store as ds
+    import json
+
+    monkeypatch.setattr(ds, "LEADS_LOG_PATH", tmp_path / "leads.jsonl")
+    await catalog.log_lead(
+        ctx,
+        outcome="opted_out",
+        consent_to_be_contacted=False,
+        notes="Caller requested no further contact",
+    )
+
+    record = json.loads((tmp_path / "leads.jsonl").read_text().strip())
+    assert record["interest_status"] == "opted_out"
+    assert record["qualification_status"] == "do_not_contact"
+    assert record["lead_temperature"] == "no_opportunity"
+    assert record["consent_to_be_contacted"] is False

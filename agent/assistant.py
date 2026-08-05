@@ -5,17 +5,25 @@ specialist agent plus the escalation hand-off in escalation_agent.py.
 
 from __future__ import annotations
 
-from livekit.agents import Agent
+from livekit.agents import Agent, llm
 
-from agent.persona import INSTRUCTIONS
+from agent.persona import instructions_for_call, instructions_for_language
 from tools.catalog import ALL_TOOLS
 
 
 class RealEstateGroupAssistant(Agent):
     def __init__(self) -> None:
-        super().__init__(instructions=INSTRUCTIONS, tools=ALL_TOOLS)
+        super().__init__(instructions=instructions_for_language(None), tools=ALL_TOOLS)
+
+    async def on_user_turn_completed(
+        self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
+    ) -> None:
+        await self.update_instructions(
+            instructions_for_call(self.session.userdata)
+        )
 
     async def on_enter(self) -> None:
+        await self.update_instructions(instructions_for_call(self.session.userdata))
         # allow_interruptions=False: without this, a 2026-08-03 observability
         # export showed the opening greeting getting cancelled ~1.7s in on
         # its very first LLM request, before ever playing - the default

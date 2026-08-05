@@ -22,17 +22,31 @@ from __future__ import annotations
 
 import logging
 import os
+import json
+from collections.abc import Mapping
+from typing import Any
 
 from dotenv import load_dotenv
 from livekit import rtc
-from livekit.agents import AgentSession, JobContext, JobProcess, WorkerOptions, cli, inference
-from livekit.agents.llm import LLM, FallbackAdapter
+from livekit.agents import (
+    AgentSession,
+    JobContext,
+    JobProcess,
+    WorkerOptions,
+    cli,
+    inference,
+)
+from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter
 from livekit.agents.voice.room_io import RoomInputOptions
+from livekit.agents.voice.events import (
+    ConversationItemAddedEvent,
+    UserInputTranscribedEvent,
+)
 from livekit.plugins import noise_cancellation, sarvam, silero
 
 from agent.assistant import RealEstateGroupAssistant
 from agent.data_store import DataStore
-from agent.state import CallUserdata
+from agent.state import CallUserdata, select_language
 
 load_dotenv()
 
@@ -44,7 +58,7 @@ logger = logging.getLogger("The Real Estate Group")
 # (OpenAI, Google, Moonshot, DeepSeek, zAI, xAI) or SarvamLLMModels for
 # Sarvam's own models (e.g. "sarvam-105b" - "sarvam-m" is deprecated per
 # their API as of this writing).
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-ai/deepseek-v3")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")  # openai/gpt-4.1-mini
 
 # Backup model used via FallbackAdapter if LLM_MODEL's provider connection
 # fails or hangs - added 2026-08-03 after a live test hit a hard
@@ -53,12 +67,16 @@ LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-ai/deepseek-v3")
 # the turn with no retry (the agent just went quiet). gpt-4.1-mini tested
 # reliably with zero connection failures across the full behavior suite,
 # unlike deepseek-ai/deepseek-v3 which has shown repeated timeouts.
-FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "openai/gpt-4.1-mini")
+FALLBACK_LLM_MODEL = os.getenv(
+    "FALLBACK_LLM_MODEL", "deepseek-ai/deepseek-v3"
+)  # deepseek-ai/deepseek-v3
 
 
 def _build_llm(model: str) -> LLM:
     def _one(m: str) -> LLM:
-        return sarvam.LLM(model=m) if m.startswith("sarvam-") else inference.LLM(model=m)
+        return (
+            sarvam.LLM(model=m) if m.startswith("sarvam-") else inference.LLM(model=m)
+        )
 
     if model == FALLBACK_LLM_MODEL:
         return _one(model)
@@ -79,9 +97,8 @@ def _build_llm(model: str) -> LLM:
 
 
 def prewarm(proc: JobProcess) -> None:
-    # Fallback VAD only - primary turn detection is Sarvam's own STT-based
-    # end-of-speech signal (turn_detection="stt" below). Loaded once per
-    # worker process so a cold VAD load never blocks call setup.
+    # VAD is used alongside LiveKit's semantic turn detector. Loaded once
+    # per worker process so a cold VAD load never blocks call setup.
     proc.userdata["vad"] = silero.VAD.load()
 
 
@@ -96,11 +113,79 @@ def _extract_caller_phone(participant: rtc.RemoteParticipant | None) -> str | No
     return participant.attributes.get("sip.phoneNumber")
 
 
+def _extract_outbound_lead_context(
+    metadata: str | None, attributes: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """Read optional outbound campaign context without trusting arbitrary keys.
+
+    Dispatchers may send a flat JSON object or a nested ``lead`` object in job
+    metadata. Job attributes are also supported for campaign systems that use
+    LiveKit attribute maps. Unknown fields are deliberately ignored.
+    """
+    decoded: dict[str, Any] = {}
+    if metadata:
+        try:
+            candidate = json.loads(metadata)
+            if isinstance(candidate, dict):
+                nested = candidate.get("lead")
+                if isinstance(nested, dict):
+                    decoded.update(nested)
+                decoded.update(candidate)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Outbound job metadata is not valid JSON; ignoring it")
+
+    attribute_values = dict(attributes or {})
+
+    def _value(*keys: str) -> str | None:
+        for key in keys:
+            value = decoded.get(key)
+            if value is None:
+                value = attribute_values.get(key)
+            if isinstance(value, (str, int, float)) and str(value).strip():
+                return str(value).strip()
+        return None
+
+    return {
+        "caller_name": _value("caller_name", "name", "lead.name"),
+        "caller_phone": _value("caller_phone", "phone", "lead.phone"),
+        "source_channel": _value(
+            "source_channel", "source", "channel", "lead.source_channel"
+        ),
+        "source_campaign": _value(
+            "source_campaign", "campaign", "campaign_id", "lead.campaign"
+        ),
+        "source_project": _value(
+            "source_project", "project", "project_name", "lead.project"
+        ),
+        "source_enquiry_id": _value(
+            "source_enquiry_id", "enquiry_id", "lead_id", "lead.enquiry_id"
+        ),
+        "consent_reference": _value(
+            "consent_reference", "consent_id", "lead.consent_reference"
+        ),
+    }
+
+
+def _metric_seconds(metrics: dict, key: str) -> float | None:
+    """Return a compact scalar for logging without doing timing work here."""
+    value = metrics.get(key)
+    return round(value, 3) if isinstance(value, (int, float)) else None
+
+
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
     data_store = DataStore.load()
-    userdata = CallUserdata(data_store=data_store, caller_phone=None)
+    lead_context = _extract_outbound_lead_context(
+        ctx.job.metadata, getattr(ctx.job, "attributes", None)
+    )
+    userdata = CallUserdata(data_store=data_store, **lead_context)
+    logger.info(
+        "Outbound lead context loaded: source=%s campaign=%s project_supplied=%s",
+        userdata.source_channel or "unknown",
+        userdata.source_campaign or "unknown",
+        bool(userdata.source_project),
+    )
 
     # Pick up the caller's phone number opportunistically, without blocking
     # session start on it. A prior version called `await
@@ -126,6 +211,25 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.room.on("participant_connected", _on_participant_connected)
 
+    llm = _build_llm(LLM_MODEL)
+    logger.info(
+        "LLM configured: primary=%s fallback=%s",
+        LLM_MODEL,
+        FALLBACK_LLM_MODEL,
+    )
+
+    def _on_llm_metrics(metrics) -> None:
+        metadata = metrics.metadata
+        logger.info(
+            "LLM request completed: model=%s provider=%s duration=%.2fs ttft=%.2fs",
+            metadata.model_name if metadata else "unknown",
+            metadata.model_provider if metadata else "unknown",
+            metrics.duration,
+            metrics.ttft,
+        )
+
+    llm.on("metrics_collected", _on_llm_metrics)
+
     session = AgentSession[CallUserdata](
         userdata=userdata,
         vad=ctx.proc.userdata["vad"],
@@ -136,21 +240,21 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=sarvam.TTS(
             model="bulbul:v3",
             speaker="shubh",
-            # Default before the caller has picked a language (persona.py's
-            # greeting asks Hindi/Marathi/English) - set_conversation_language
-            # switches this via tts.update_options() once they choose.
+            # Default until a substantive final transcript selects a language.
             target_language_code="hi-IN",
         ),
-        llm=_build_llm(LLM_MODEL),
+        llm=llm,
         turn_handling={
-            "turn_detection": "stt",  # Sarvam emits its own start/end-of-speech; do not also pass VAD here
-            "endpointing": {"min_delay": 0.07},
-            # Start TTS synthesis before the turn is fully confirmed, not just
-            # LLM generation (LiveKit's default) - shaves the TTS
-            # time-to-first-byte off the perceived response delay, which the
-            # 2026-08-03 observability export showed averaging ~0.74s (and
-            # spiking to 10s once) on top of ~0.9s STT + ~1.2s LLM TTFT.
-            "preemptive_generation": {"preemptive_tts": True},
+            "turn_detection": inference.TurnDetector(),
+            "endpointing": {
+                "mode": "dynamic",
+                "min_delay": 0.3,
+                "max_delay": 2.0,
+            },
+            # Keep preemptive LLM generation, but wait for the turn to be
+            # confirmed before synthesizing speech. This avoids generating
+            # audible fragments when a user pauses mid-sentence.
+            "preemptive_generation": {"preemptive_tts": False},
             # min_duration raised from the 0.5s default: a 2026-08-03 export
             # showed the agent's own speech getting cut off mid-sentence 3
             # times in one call by brief filler/hesitation ("आप।", "म्हणजे")
@@ -163,9 +267,68 @@ async def entrypoint(ctx: JobContext) -> None:
             # interruption fires - closes the same class of issue that
             # caused the opening greeting to get cancelled by SIP call-setup
             # noise before allow_interruptions=False was added for it.
-            "interruption": {"min_duration": 0.9, "min_words": 1},
+            "interruption": {
+                "min_duration": 0.9,
+                "min_words": 1,
+                "resume_false_interruption": True,
+            },
         },
     )
+
+    def _on_user_input_transcribed(event: UserInputTranscribedEvent) -> None:
+        if not event.is_final:
+            return
+        selected = select_language(
+            userdata.preferred_language,
+            event.transcript,
+            str(event.language) if event.language is not None else None,
+        )
+        if selected is None or selected == userdata.preferred_language:
+            return
+        userdata.preferred_language = selected
+        tts = session.tts
+        if isinstance(tts, sarvam.TTS):
+            tts.update_options(target_language_code=selected)
+
+    session.on("user_input_transcribed", _on_user_input_transcribed)
+
+    def _on_conversation_item_added(event: ConversationItemAddedEvent) -> None:
+        # LiveKit has already calculated these values. Keep this callback
+        # synchronous and tiny: no awaits, network I/O, transcript logging,
+        # or manual timestamp correlation on the conversation path.
+        if not logger.isEnabledFor(logging.INFO) or not isinstance(
+            event.item, ChatMessage
+        ):
+            return
+
+        item = event.item
+        metrics = item.metrics
+        if item.role == "user":
+            logger.info(
+                "Turn metrics: role=user item_id=%s transcription_delay_s=%s "
+                "end_of_turn_delay_s=%s on_user_turn_completed_delay_s=%s",
+                item.id,
+                _metric_seconds(metrics, "transcription_delay"),
+                _metric_seconds(metrics, "end_of_turn_delay"),
+                _metric_seconds(metrics, "on_user_turn_completed_delay"),
+            )
+        elif item.role == "assistant":
+            llm_metadata = metrics.get("llm_metadata") or {}
+            logger.info(
+                "Turn metrics: role=assistant item_id=%s llm_ttft_s=%s "
+                "tts_ttfb_s=%s playback_latency_s=%s e2e_latency_s=%s "
+                "interrupted=%s model=%s provider=%s",
+                item.id,
+                _metric_seconds(metrics, "llm_node_ttft"),
+                _metric_seconds(metrics, "tts_node_ttfb"),
+                _metric_seconds(metrics, "playback_latency"),
+                _metric_seconds(metrics, "e2e_latency"),
+                item.interrupted,
+                llm_metadata.get("model_name", "unknown"),
+                llm_metadata.get("model_provider", "unknown"),
+            )
+
+    session.on("conversation_item_added", _on_conversation_item_added)
 
     await session.start(
         agent=RealEstateGroupAssistant(),
@@ -186,6 +349,6 @@ if __name__ == "__main__":
             # Explicit dispatch for telephony (plan.md §3.1 step 6) - must
             # match the agentName in telephony/dispatch-rule.json so calls
             # don't auto-answer via automatic dispatch.
-            agent_name=os.getenv("AGENT_NAME", "The Real Estate Group"),
+            agent_name=os.getenv("AGENT_NAME", "The Real Estate Mall"),
         )
     )

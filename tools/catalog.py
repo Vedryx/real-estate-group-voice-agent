@@ -15,50 +15,16 @@ from typing import Any
 from livekit.agents import Agent, RunContext, function_tool
 from livekit.agents.llm import ToolError
 from livekit.agents.voice.speech_handle import SpeechHandle
-from livekit.plugins import sarvam
 
 from agent import data_store as ds
 from agent.data_store import VALID_OUTCOMES
 from agent.escalation_agent import HumanEscalationAgent
-from agent.state import CallUserdata
-
-LANGUAGE_CODES = {
-    "hindi": "hi-IN",
-    "hi": "hi-IN",
-    "marathi": "mr-IN",
-    "mr": "mr-IN",
-    "english": "en-IN",
-    "en": "en-IN",
-}
-
-
-@function_tool
-async def set_conversation_language(
-    context: RunContext[CallUserdata], language: str
-) -> dict[str, Any]:
-    """Switch the voice output language. Call this as soon as the caller picks a language (Hindi, Marathi, or English) - this is what actually changes the TTS voice, saying you'll switch isn't enough. Call it again only if the caller later explicitly asks to change language - don't call it just because they said an isolated English word or sentence while otherwise speaking another language.
-
-    Args:
-        language: One of "hindi", "marathi", "english" (case-insensitive).
-    """
-    code = LANGUAGE_CODES.get(language.strip().lower())
-    if code is None:
-        return {
-            "changed": False,
-            "message": (
-                f"{language!r} is not one of the three supported languages. "
-                "Ask the caller to pick Hindi, Marathi, or English."
-            ),
-        }
-
-    context.userdata.preferred_language = code
-
-    tts = context.session.tts
-    if isinstance(tts, sarvam.TTS):
-        tts.update_options(target_language_code=code)
-
-    return {"changed": True, "language_code": code}
-
+from agent.state import (
+    INTEREST_STATUSES,
+    PURCHASE_PURPOSES,
+    PURCHASE_TIMELINES,
+    CallUserdata,
+)
 
 def _format_inr_lakh(value: float) -> str:
     """Format an INR lakh amount for natural speech.
@@ -94,9 +60,17 @@ def _augment_units_with_display(units: list[dict[str, Any]]) -> list[dict[str, A
     return out
 
 
-def _project_summary(project: dict[str, Any]) -> dict[str, Any]:
+def _project_summary(
+    project: dict[str, Any], bhk: str | None = None
+) -> dict[str, Any]:
+    units = project["unit_options"]
+    if bhk:
+        needle = _normalize(bhk)
+        units = [unit for unit in units if needle in _normalize(unit["label"])]
     prices = [
-        u["price_inr_lakh_min"] for u in project["unit_options"] if u.get("price_inr_lakh_min") is not None
+        unit["price_inr_lakh_min"]
+        for unit in units
+        if unit.get("price_inr_lakh_min") is not None
     ]
     standout_amenity = (project.get("amenities_highlights") or [None])[0]
     starting_price = min(prices) if prices else None
@@ -114,7 +88,60 @@ def _project_summary(project: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize(text: str) -> str:
-    return text.strip().upper().replace(" ", "")
+    return text.strip().strip("\"'").upper().replace(" ", "")
+
+
+@function_tool
+async def record_lead_qualification(
+    context: RunContext[CallUserdata],
+    interest_status: str,
+    purchase_timeline: str | None = None,
+    purchase_purpose: str | None = None,
+    developer_preference: str | None = None,
+) -> dict[str, Any]:
+    """Record explicit outbound qualification signals without guessing them.
+
+    Call after the caller answers whether the original enquiry is still
+    relevant. Update it later if they give a timeline, purpose, or preferred
+    developer. For terminal interest states, stop qualifying and close.
+
+    Args:
+        interest_status: One of active, casual, not_interested, already_purchased, accidental_click, wrong_person, opted_out.
+        purchase_timeline: One of unknown, within_3_months, 3_to_6_months, over_6_months, only when stated or clearly implied.
+        purchase_purpose: One of unknown, self_use, investment, only when stated.
+        developer_preference: Preferred builder/developer, if stated.
+    """
+    if interest_status not in INTEREST_STATUSES - {"unknown"}:
+        raise ToolError(
+            f"invalid interest_status {interest_status!r}; must be one of "
+            f"{sorted(INTEREST_STATUSES - {'unknown'})}"
+        )
+    if purchase_timeline is not None and purchase_timeline not in PURCHASE_TIMELINES:
+        raise ToolError(
+            f"invalid purchase_timeline {purchase_timeline!r}; must be one of "
+            f"{sorted(PURCHASE_TIMELINES)}"
+        )
+    if purchase_purpose is not None and purchase_purpose not in PURCHASE_PURPOSES:
+        raise ToolError(
+            f"invalid purchase_purpose {purchase_purpose!r}; must be one of "
+            f"{sorted(PURCHASE_PURPOSES)}"
+        )
+
+    ud = context.userdata
+    ud.interest_status = interest_status
+    if purchase_timeline is not None:
+        ud.purchase_timeline = purchase_timeline
+        ud.purchase_timeline_asked = True
+    if purchase_purpose is not None:
+        ud.purchase_purpose = purchase_purpose
+    if developer_preference:
+        ud.developer_preference = developer_preference.strip()
+
+    return {
+        "recorded": True,
+        "conversation_stage": ud.conversation_stage,
+        "qualification": ud.qualification_snapshot(),
+    }
 
 
 @function_tool
@@ -126,6 +153,11 @@ async def search_projects(
     budget_min_lakh: float | None = None,
     budget_max_lakh: float | None = None,
     property_type: str = "residential",
+    developer: str | None = None,
+    relax_locality: bool = False,
+    relax_bhk: bool = False,
+    relax_budget: bool = False,
+    relax_developer: bool = False,
 ) -> dict[str, Any]:
     """Find The Real Estate Group projects matching a caller's stated preferences.
 
@@ -141,9 +173,24 @@ async def search_projects(
         budget_min_lakh: Minimum budget in INR lakh, if the caller stated one.
         budget_max_lakh: Maximum budget in INR lakh, if the caller stated one.
         property_type: "residential" or "commercial". The Real Estate Group currently has no confirmed commercial inventory - see the returned message if "commercial" is requested.
+        developer: Preferred builder/developer, if the caller stated one, e.g. "Kolte Patil".
+        relax_locality: Set true only after the caller explicitly agrees to broaden/clear their stored locality.
+        relax_bhk: Set true only after the caller explicitly agrees to broaden/clear their stored BHK.
+        relax_budget: Set true only after the caller explicitly agrees to broaden/clear their stored budget.
+        relax_developer: Set true only after the caller explicitly agrees to consider other developers.
     """
     ud = context.userdata
     store = ud.data_store
+
+    if relax_locality:
+        ud.requested_locality = None
+    if relax_bhk:
+        ud.bhk_preference = None
+    if relax_budget:
+        ud.budget_min_lakh = None
+        ud.budget_max_lakh = None
+    if relax_developer:
+        ud.developer_preference = None
 
     ud.requested_city = city
     ud.requested_locality = locality or ud.requested_locality
@@ -151,9 +198,18 @@ async def search_projects(
     ud.budget_min_lakh = budget_min_lakh if budget_min_lakh is not None else ud.budget_min_lakh
     ud.budget_max_lakh = budget_max_lakh if budget_max_lakh is not None else ud.budget_max_lakh
     ud.property_type_requested = property_type
+    ud.developer_preference = developer or ud.developer_preference
+
+    effective_locality = ud.requested_locality
+    effective_bhk = ud.bhk_preference
+    effective_budget_min = ud.budget_min_lakh
+    effective_budget_max = ud.budget_max_lakh
+    effective_developer = ud.developer_preference
 
     served_cities = {c.lower() for c in store.served_cities()}
     if city.strip().lower() not in served_cities:
+        ud.inventory_fit = "no_exact_match"
+        ud.matching_project_ids = []
         return {
             "served": False,
             "matches": [],
@@ -162,9 +218,12 @@ async def search_projects(
                 "inventory - tell the caller honestly and call "
                 "log_out_of_area_interest to capture the demand signal."
             ),
+            "qualification": ud.qualification_snapshot(),
         }
 
     if property_type == "commercial":
+        ud.inventory_fit = "no_exact_match"
+        ud.matching_project_ids = []
         return {
             "served": True,
             "matches": [],
@@ -173,29 +232,43 @@ async def search_projects(
                 "inventory. Tell the caller honestly rather than offering a "
                 "residential project as a substitute, and offer to log their interest."
             ),
+            "qualification": ud.qualification_snapshot(),
         }
 
     matches = []
     for project in store.projects:
         if project["city"].strip().lower() != city.strip().lower():
             continue
-        if locality and locality.strip().lower() not in project["locality"].lower():
+        if effective_locality and effective_locality.strip().lower() not in project["locality"].lower():
             continue
-        if bhk and _normalize(bhk) not in {_normalize(b) for b in project["bhk_available"]}:
+        if effective_developer:
+            developer_needle = effective_developer.strip().lower()
+            project_developer = project["developer"].lower()
+            if developer_needle not in project_developer and project_developer not in developer_needle:
+                continue
+        if effective_bhk and _normalize(effective_bhk) not in {
+            _normalize(b) for b in project["bhk_available"]
+        }:
             continue
-        if budget_min_lakh is not None or budget_max_lakh is not None:
+        if effective_budget_min is not None or effective_budget_max is not None:
+            candidate_units = project["unit_options"]
+            if effective_bhk:
+                bhk_needle = _normalize(effective_bhk)
+                candidate_units = [
+                    unit for unit in candidate_units if bhk_needle in _normalize(unit["label"])
+                ]
             prices = [
                 v
-                for u in project["unit_options"]
+                for u in candidate_units
                 for v in (u.get("price_inr_lakh_min"), u.get("price_inr_lakh_max"))
                 if v is not None
             ]
             if not prices:
                 continue
             lo, hi = min(prices), max(prices)
-            if budget_max_lakh is not None and lo > budget_max_lakh:
+            if effective_budget_max is not None and lo > effective_budget_max:
                 continue
-            if budget_min_lakh is not None and hi < budget_min_lakh:
+            if effective_budget_min is not None and hi < effective_budget_min:
                 continue
         matches.append(project)
 
@@ -203,6 +276,8 @@ async def search_projects(
         ud.note_project_discussed(project["id"])
 
     if not matches:
+        ud.inventory_fit = "no_exact_match"
+        ud.matching_project_ids = []
         return {
             "served": True,
             "matches": [],
@@ -212,9 +287,17 @@ async def search_projects(
                 "the nearest alternative (relax budget or BHK by one step) as a "
                 "question, not a claim."
             ),
+            "qualification": ud.qualification_snapshot(),
         }
 
-    return {"served": True, "matches": [_project_summary(p) for p in matches]}
+    ud.inventory_fit = "exact_match"
+    ud.matching_project_ids = [project["id"] for project in matches]
+    return {
+        "served": True,
+        "matches": [_project_summary(p, effective_bhk) for p in matches[:3]],
+        "total_exact_matches": len(matches),
+        "qualification": ud.qualification_snapshot(),
+    }
 
 
 @function_tool
@@ -398,6 +481,7 @@ def _current_lead_kwargs(ud: CallUserdata, notes: str) -> dict[str, Any]:
         if (ud.budget_min_lakh is not None or ud.budget_max_lakh is not None)
         else None
     )
+    qualification = ud.qualification_snapshot()
     return {
         "caller_phone": ud.caller_phone,
         "name": ud.caller_name,
@@ -407,10 +491,56 @@ def _current_lead_kwargs(ud: CallUserdata, notes: str) -> dict[str, Any]:
         "bhk_preference": ud.bhk_preference,
         "budget_range_inr_lakh": budget,
         "property_type_requested": ud.property_type_requested,
+        "developer_preference": ud.developer_preference,
         "projects_discussed": list(ud.projects_discussed),
+        "matching_project_ids": list(ud.matching_project_ids),
         "workplace_area": ud.workplace_area,
+        "source_channel": ud.source_channel,
+        "source_campaign": ud.source_campaign,
+        "source_project": ud.source_project,
+        "source_enquiry_id": ud.source_enquiry_id,
+        "consent_reference": ud.consent_reference,
+        "interest_status": ud.interest_status,
+        "purchase_timeline": ud.purchase_timeline,
+        "purchase_timeline_asked": ud.purchase_timeline_asked,
+        "purchase_purpose": ud.purchase_purpose,
+        "inventory_fit": ud.inventory_fit,
+        "next_step": ud.next_step,
+        "closing_attempted": ud.closing_attempted,
+        "qualification_status": qualification["qualification_status"],
+        "lead_temperature": qualification["lead_temperature"],
+        "qualification_reasons": qualification["qualification_reasons"],
         "notes": notes,
     }
+
+
+def _apply_outcome_to_state(ud: CallUserdata, outcome: str) -> None:
+    """Keep persistence outcome and deterministic qualification state aligned."""
+    terminal_interest = {
+        "not_interested": "not_interested",
+        "already_purchased": "already_purchased",
+        "accidental_click": "accidental_click",
+        "wrong_number": "wrong_person",
+        "opted_out": "opted_out",
+    }
+    if outcome in terminal_interest:
+        ud.interest_status = terminal_interest[outcome]
+        ud.next_step = "no_followup"
+        ud.closing_attempted = True
+    elif outcome == "site_visit_requested":
+        ud.next_step = "site_visit_requested"
+        ud.closing_attempted = True
+    elif outcome == "callback_requested":
+        ud.next_step = "callback_requested"
+        ud.closing_attempted = True
+    elif outcome == "nurture_lead":
+        ud.next_step = "future_followup"
+        ud.closing_attempted = True
+    elif outcome == "qualified_lead":
+        ud.closing_attempted = True
+    elif outcome in {"info_only_no_lead", "spam_or_abandoned"}:
+        ud.next_step = "no_followup"
+        ud.closing_attempted = True
 
 
 @function_tool
@@ -425,7 +555,7 @@ async def log_lead(
     """Persist a lead record. Call once per distinct outcome - for multiple family members with different needs on one call, call this again for the second lead.
 
     Args:
-        outcome: One of qualified_lead, callback_requested, site_visit_requested, not_serviceable_area, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned.
+        outcome: One of qualified_lead, callback_requested, site_visit_requested, nurture_lead, not_interested, already_purchased, accidental_click, wrong_number, not_serviceable_area, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned.
         name: Caller's name, if they've stated it anywhere in the conversation so far - extract it from their own words even if they gave it casually rather than in response to a direct "what's your name" question. Don't pass null if they already told you.
         phone: Best callback number, if they've stated it anywhere in the conversation so far - same rule as name, extract it even if given casually (falls back to the caller's SIP number if known).
         notes: Free-text notes capturing anything relevant not covered by other fields.
@@ -437,6 +567,7 @@ async def log_lead(
     ud = context.userdata
     if name:
         ud.caller_name = name
+    _apply_outcome_to_state(ud, outcome)
 
     kwargs = _current_lead_kwargs(ud, notes)
     kwargs["name"] = name or ud.caller_name
@@ -445,7 +576,11 @@ async def log_lead(
         outcome=outcome, consent_to_be_contacted=consent_to_be_contacted, **kwargs
     )
     ud.lead_logged = True
-    return {"logged": True, "lead_id": record["lead_id"]}
+    return {
+        "logged": True,
+        "lead_id": record["lead_id"],
+        "qualification": ud.qualification_snapshot(),
+    }
 
 
 @function_tool
@@ -465,23 +600,26 @@ async def log_out_of_area_interest(
     ud = context.userdata
     if name:
         ud.caller_name = name
+    ud.inventory_fit = "no_exact_match"
+    ud.matching_project_ids = []
+    ud.next_step = "future_followup"
+    ud.closing_attempted = True
 
+    ud.requested_city = requested_city_or_locality
+    kwargs = _current_lead_kwargs(
+        ud, notes=f"Requested unserved area: {requested_city_or_locality}"
+    )
+    kwargs["name"] = name or ud.caller_name
+    kwargs["caller_phone"] = phone or ud.caller_phone
     record = ds.log_lead(
-        caller_phone=phone or ud.caller_phone,
-        outcome="not_serviceable_area",
-        name=name or ud.caller_name,
-        preferred_language=ud.preferred_language,
-        requested_city=requested_city_or_locality,
-        requested_locality=ud.requested_locality,
-        bhk_preference=ud.bhk_preference,
-        property_type_requested=ud.property_type_requested,
-        projects_discussed=list(ud.projects_discussed),
-        workplace_area=ud.workplace_area,
-        notes=f"Requested unserved area: {requested_city_or_locality}",
-        consent_to_be_contacted=True,
+        outcome="not_serviceable_area", consent_to_be_contacted=True, **kwargs
     )
     ud.lead_logged = True
-    return {"logged": True, "lead_id": record["lead_id"]}
+    return {
+        "logged": True,
+        "lead_id": record["lead_id"],
+        "qualification": ud.qualification_snapshot(),
+    }
 
 
 @function_tool
@@ -489,32 +627,53 @@ async def schedule_site_visit(
     context: RunContext[CallUserdata],
     project_id: str,
     preferred_date: str,
-    name: str,
-    phone: str,
+    name: str | None = None,
+    phone: str | None = None,
 ) -> dict[str, Any]:
     """Capture a site-visit request. No calendar integration in v1 - this logs intent for a human to action and confirm.
 
     Args:
         project_id: The project the caller wants to visit.
         preferred_date: The caller's preferred date/time in their own words, e.g. "this Saturday afternoon".
-        name: Caller's name.
-        phone: Contact number for confirming the visit.
+        name: Caller's name; omit if already present in outbound lead context.
+        phone: Contact number; omit to use the known outbound/SIP caller number.
     """
     ud = context.userdata
-    ud.caller_name = name
-    ud.note_project_discussed(project_id)
+    if name:
+        ud.caller_name = name
 
     project = ud.data_store.get_project(project_id)
-    project_name = project["name"] if project else project_id
+    if project is None:
+        raise ToolError(f"No project with id {project_id!r}; ask which project they mean.")
+    ud.note_project_discussed(project_id)
+    project_name = project["name"]
+    resolved_name = name or ud.caller_name
+    resolved_phone = phone or ud.caller_phone
+    if not resolved_name:
+        raise ToolError("A caller name is required before saving a site-visit request.")
+    if not resolved_phone:
+        raise ToolError("A callback phone number is required before saving a site-visit request.")
+    ud.next_step = "site_visit_requested"
+    ud.closing_attempted = True
 
     kwargs = _current_lead_kwargs(
         ud, notes=f"Site visit requested for {project_name}, preferred: {preferred_date}"
     )
-    kwargs["name"] = name
-    kwargs["caller_phone"] = phone
+    kwargs["name"] = resolved_name
+    kwargs["caller_phone"] = resolved_phone
     record = ds.log_lead(outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs)
     ud.lead_logged = True
-    return {"logged": True, "lead_id": record["lead_id"], "project_name": project_name}
+    return {
+        "logged": True,
+        "lead_id": record["lead_id"],
+        "project_name": project_name,
+        "status": "requested_pending_human_confirmation",
+        "message": (
+            "The site-visit request is saved but not yet confirmed. Tell the caller "
+            "that the team will call to confirm the final slot; never say it is booked."
+        ),
+        "qualification": ud.qualification_snapshot(),
+    }
 
 
 @function_tool
@@ -537,12 +696,13 @@ async def end_call(context: RunContext[CallUserdata], outcome: str) -> str:
     """Gracefully end the call, tagging the final outcome. If no lead has been logged yet this session (e.g. a quick "not interested" close), this call also logs one using whatever fields were collected. This must be the last tool call in a turn - do not generate further text after it resolves beyond a brief goodbye.
 
     Args:
-        outcome: One of qualified_lead, callback_requested, site_visit_requested, not_serviceable_area, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned.
+        outcome: One of qualified_lead, callback_requested, site_visit_requested, nurture_lead, not_interested, already_purchased, accidental_click, wrong_number, not_serviceable_area, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned.
     """
     if outcome not in VALID_OUTCOMES:
         raise ToolError(f"invalid outcome {outcome!r}; must be one of {sorted(VALID_OUTCOMES)}")
 
     ud = context.userdata
+    _apply_outcome_to_state(ud, outcome)
     if not ud.lead_logged:
         ds.log_lead(
             outcome=outcome,
@@ -559,7 +719,7 @@ async def end_call(context: RunContext[CallUserdata], outcome: str) -> str:
 
 
 ALL_TOOLS = [
-    set_conversation_language,
+    record_lead_qualification,
     search_projects,
     get_project_details,
     get_amenities,
