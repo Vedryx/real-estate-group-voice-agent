@@ -44,13 +44,13 @@ from livekit.agents.voice.events import (
 )
 from livekit.plugins import noise_cancellation, sarvam, silero
 
-from agent.assistant import RealEstateGroupAssistant
-from agent.data_store import DataStore
+from agent.assistant import CanopyAssistant
+from agent.canopy import CanopyKnowledge
 from agent.state import CallUserdata, select_language
 
 load_dotenv()
 
-logger = logging.getLogger("The Real Estate Group")
+logger = logging.getLogger("The Canopy")
 
 # The LLM only ever reasons in text - Sarvam handles the voice ends - so
 # its own Hindi/Marathi fluency matters less than tool-calling reliability
@@ -60,16 +60,13 @@ logger = logging.getLogger("The Real Estate Group")
 # their API as of this writing).
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")  # openai/gpt-4.1-mini
 
-# Backup model used via FallbackAdapter if LLM_MODEL's provider connection
-# fails or hangs - added 2026-08-03 after a live test hit a hard
-# httpcore.ReadTimeout / APIConnectionError streaming from DeepSeek via
-# LiveKit's inference gateway ~10s into a response, which silently killed
-# the turn with no retry (the agent just went quiet). gpt-4.1-mini tested
-# reliably with zero connection failures across the full behavior suite,
-# unlike deepseek-ai/deepseek-v3 which has shown repeated timeouts.
-FALLBACK_LLM_MODEL = os.getenv(
-    "FALLBACK_LLM_MODEL", "deepseek-ai/deepseek-v3"
-)  # deepseek-ai/deepseek-v3
+# Optional backup model via FallbackAdapter. DeepSeek was DROPPED as the
+# default fallback (Canopy migration): a real call showed deepseek-ai/
+# deepseek-v3 hitting APITimeoutError / APIConnectionError and silently
+# killing turns, so it is no longer trusted even as a backstop. Default is
+# now EMPTY = no fallback (single reliable primary). Set FALLBACK_LLM_MODEL
+# to another *reliable* model (e.g. openai/gpt-4.1) if a backstop is wanted.
+FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "").strip()
 
 
 def _build_llm(model: str) -> LLM:
@@ -78,21 +75,11 @@ def _build_llm(model: str) -> LLM:
             sarvam.LLM(model=m) if m.startswith("sarvam-") else inference.LLM(model=m)
         )
 
-    if model == FALLBACK_LLM_MODEL:
+    if not FALLBACK_LLM_MODEL or model == FALLBACK_LLM_MODEL:
         return _one(model)
 
-    # attempt_timeout=2.5 (lowered from 5.0 on 2026-08-03): a real call's
-    # traces showed deepseek-ai/deepseek-v3 failing 3 times in ~10 turns -
-    # two hit APITimeoutError at ~5.1-5.25s (bumping right against the old
-    # 5.0s ceiling), one took 7.46s to surface APIConnectionError. Every
-    # single fallback attempt to gpt-4.1-mini then succeeded in 1.65-3.42s.
-    # Cutting the primary's budget to 2.5s means a stalling request gets
-    # abandoned faster - worst case per turn drops from ~5-7.5s to roughly
-    # 2.5s + the fallback's own ttft (~1.2-2.5s observed), instead of
-    # waiting out the full failure first. Tradeoff: a handful of DeepSeek
-    # responses that are merely slow to start (one observed at 3.98s ttft,
-    # not a failure) will now get preempted into an unnecessary fallback
-    # too - acceptable given every observed fallback was itself fast.
+    # attempt_timeout=2.5s: abandon a stalling primary request quickly and
+    # fail over rather than waiting out a full connection timeout.
     return FallbackAdapter([_one(model), _one(FALLBACK_LLM_MODEL)], attempt_timeout=2.5)
 
 
@@ -175,11 +162,11 @@ def _metric_seconds(metrics: dict, key: str) -> float | None:
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
-    data_store = DataStore.load()
+    knowledge = CanopyKnowledge.load()
     lead_context = _extract_outbound_lead_context(
         ctx.job.metadata, getattr(ctx.job, "attributes", None)
     )
-    userdata = CallUserdata(data_store=data_store, **lead_context)
+    userdata = CallUserdata(knowledge=knowledge, **lead_context)
     logger.info(
         "Outbound lead context loaded: source=%s campaign=%s project_supplied=%s",
         userdata.source_channel or "unknown",
@@ -331,7 +318,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session.on("conversation_item_added", _on_conversation_item_added)
 
     await session.start(
-        agent=RealEstateGroupAssistant(),
+        agent=CanopyAssistant(),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             # Telephony-tuned Krisp noise cancellation - real phone calls
@@ -346,9 +333,11 @@ if __name__ == "__main__":
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
-            # Explicit dispatch for telephony (plan.md §3.1 step 6) - must
-            # match the agentName in telephony/dispatch-rule.json so calls
-            # don't auto-answer via automatic dispatch.
-            agent_name=os.getenv("AGENT_NAME", "The Real Estate Mall"),
+            # Explicit dispatch for telephony - MUST match the agentName in
+            # telephony/dispatch-rule.json and .env exactly, or calls stop
+            # routing silently. The fallback here is the canonical Canopy
+            # agent name so a missing .env doesn't point dispatch at a wrong
+            # string (the old "The Real Estate Mall" fallback was a latent bug).
+            agent_name=os.getenv("AGENT_NAME", "the-canopy-agent"),
         )
     )

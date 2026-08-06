@@ -1,7 +1,10 @@
-"""Per-call session state (AgentSession userdata).
+"""Per-call session state (AgentSession userdata) for the Canopy agent.
 
-Tracks what's already been collected from the caller so the agent
-doesn't re-ask (plan.md §8), and carries the read-only DataStore.
+Single project (The Canopy). Tracks what the caller has told us so the agent
+doesn't re-ask, carries the read-only Canopy knowledge, and exposes a *light*
+stage signal (opening -> engaged -> closing) plus an internal qualification
+snapshot. The stage does NOT gate answers — the agent stays reactive; the
+stage just tells it where the call is.
 """
 
 from __future__ import annotations
@@ -9,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from agent.data_store import DataStore
+from agent.canopy import CanopyKnowledge
 
 
 SUPPORTED_LANGUAGE_CODES = frozenset({"hi-IN", "mr-IN", "en-IN"})
@@ -30,7 +33,7 @@ PURCHASE_TIMELINES = frozenset(
     {"unknown", "within_3_months", "3_to_6_months", "over_6_months"}
 )
 PURCHASE_PURPOSES = frozenset({"unknown", "self_use", "investment"})
-INVENTORY_FITS = frozenset({"unknown", "exact_match", "no_exact_match"})
+CONFIG_INTERESTS = frozenset({"2 BHK", "3 BHK"})
 NEXT_STEPS = frozenset(
     {"none", "site_visit_requested", "callback_requested", "future_followup", "no_followup"}
 )
@@ -133,81 +136,44 @@ def select_language(
 
 @dataclass
 class CallUserdata:
-    data_store: DataStore
+    knowledge: CanopyKnowledge
 
     caller_phone: str | None = None
     caller_name: str | None = None
     preferred_language: str | None = None
 
-    # Outbound lead context supplied by the campaign/dispatch system. These
-    # fields let the opener mention the real source without inventing one.
+    # Outbound campaign context supplied by the dispatcher (parsed in worker.py).
     source_channel: str | None = None
     source_campaign: str | None = None
     source_project: str | None = None
     source_enquiry_id: str | None = None
     consent_reference: str | None = None
 
-    requested_city: str | None = None
-    requested_locality: str | None = None
-    bhk_preference: str | None = None
-    budget_min_lakh: float | None = None
-    budget_max_lakh: float | None = None
-    property_type_requested: str = "unspecified"
-    workplace_area: str | None = None
-    developer_preference: str | None = None
-
+    # What the caller has volunteered about their requirement.
     interest_status: str = "unknown"
+    config_interest: str | None = None  # "2 BHK" / "3 BHK"
     purchase_timeline: str = "unknown"
     purchase_timeline_asked: bool = False
     purchase_purpose: str = "unknown"
-    inventory_fit: str = "unknown"
-    matching_project_ids: list[str] = field(default_factory=list)
-    closing_attempted: bool = False
+
     next_step: str = "none"
-
-    projects_discussed: list[str] = field(default_factory=list)
+    closing_attempted: bool = False
     lead_logged: bool = False
-
-    def note_project_discussed(self, project_id: str) -> None:
-        if project_id not in self.projects_discussed:
-            self.projects_discussed.append(project_id)
-
-    @property
-    def requirements_complete(self) -> bool:
-        """Minimum facts needed to call an outbound lead qualified."""
-        return bool(
-            self.requested_city
-            and self.bhk_preference
-            and self.purchase_timeline_asked
-            and (
-                self.budget_min_lakh is not None
-                or self.budget_max_lakh is not None
-            )
-        )
 
     @property
     def conversation_stage(self) -> str:
-        """Deterministic stage rail exposed to the LLM on every turn."""
-        if self.interest_status in _TERMINAL_INTEREST:
-            return "close"
+        """Light 3-state signal exposed to the LLM — informs, does not gate."""
+        if self.interest_status in _TERMINAL_INTEREST or self.closing_attempted:
+            return "closing"
         if self.interest_status == "unknown":
-            return "confirm_interest"
-        if not self.requirements_complete:
-            return "collect_requirements"
-        if self.inventory_fit == "unknown":
-            return "match_projects"
-        if self.inventory_fit == "exact_match" and not self.closing_attempted:
-            return "present_matches_and_offer_next_step"
-        if self.inventory_fit == "no_exact_match" and not self.closing_attempted:
-            return "explain_gap_and_offer_callback"
-        return "close"
+            return "opening"
+        return "engaged"
 
     def qualification_snapshot(self) -> dict[str, object]:
-        """Classify the lead from explicit, auditable signals.
+        """Classify the lead from explicit, auditable signals (internal CRM tags).
 
-        Terminal intent always overrides any score. A lead becomes qualified
-        only after we have minimum requirements and an exact inventory match.
-        Hot additionally requires a near-term timeline and an accepted CTA.
+        Never spoken aloud. Terminal intent overrides any score. Hot needs
+        active interest + a near-term timeline + an accepted next step.
         """
         reasons: list[str] = []
 
@@ -224,7 +190,6 @@ class CallUserdata:
                 "qualification_status": status,
                 "lead_temperature": "no_opportunity",
                 "qualification_reasons": reasons,
-                "requirements_complete": self.requirements_complete,
             }
 
         if self.interest_status == "casual":
@@ -233,7 +198,6 @@ class CallUserdata:
                 "qualification_status": "casual_enquiry",
                 "lead_temperature": "nurture",
                 "qualification_reasons": reasons,
-                "requirements_complete": self.requirements_complete,
             }
 
         if self.interest_status == "unknown":
@@ -242,38 +206,16 @@ class CallUserdata:
                 "qualification_status": "incomplete",
                 "lead_temperature": "unscored",
                 "qualification_reasons": reasons,
-                "requirements_complete": self.requirements_complete,
             }
 
-        if not self.requirements_complete:
-            reasons.append(
-                "City, BHK, budget, and an answered timeline question are not all captured yet"
-            )
-            return {
-                "qualification_status": "incomplete",
-                "lead_temperature": "nurture",
-                "qualification_reasons": reasons,
-                "requirements_complete": False,
-            }
+        # interest_status == "active"
+        reasons.append("Caller confirmed active interest")
+        accepted_cta = self.next_step in {"site_visit_requested", "callback_requested"}
 
-        if self.inventory_fit != "exact_match":
-            reasons.append("No exact inventory match has been found")
-            return {
-                "qualification_status": "unqualified",
-                "lead_temperature": "nurture",
-                "qualification_reasons": reasons,
-                "requirements_complete": True,
-            }
-
-        reasons.extend(
-            ["Caller confirmed active interest", "Requirements are complete", "Exact inventory match found"]
-        )
-        accepted_cta = self.next_step in {
-            "site_visit_requested",
-            "callback_requested",
-        }
         if self.purchase_timeline == "within_3_months" and accepted_cta:
-            reasons.extend(["Purchase timeline is within 3 months", "Caller accepted a next step"])
+            reasons.extend(
+                ["Purchase timeline is within 3 months", "Caller accepted a next step"]
+            )
             temperature = "hot"
         elif self.purchase_timeline == "over_6_months":
             reasons.append("Purchase timeline is over 6 months")
@@ -284,8 +226,7 @@ class CallUserdata:
             temperature = "warm"
 
         return {
-            "qualification_status": "qualified",
+            "qualification_status": "qualified" if accepted_cta else "in_progress",
             "lead_temperature": temperature,
             "qualification_reasons": reasons,
-            "requirements_complete": True,
         }

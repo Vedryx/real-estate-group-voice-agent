@@ -20,11 +20,11 @@ import pytest_asyncio
 from livekit.agents import AgentSession, inference
 
 from agent import data_store as ds
-from agent.assistant import RealEstateGroupAssistant
-from agent.data_store import DataStore
+from agent.assistant import CanopyAssistant
+from agent.canopy import CanopyKnowledge
 from agent.state import CallUserdata
 
-TEST_LLM_MODEL = os.getenv("TEST_LLM_MODEL", "deepseek-ai/deepseek-v3")
+TEST_LLM_MODEL = os.getenv("TEST_LLM_MODEL", "openai/gpt-4.1-mini")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -58,12 +58,14 @@ def isolate_leads_log(tmp_path, monkeypatch):
 @pytest_asyncio.fixture
 async def call() -> AsyncIterator[AgentSession[CallUserdata]]:
     """A fresh, started assistant session with a clean CallUserdata per test."""
-    userdata = CallUserdata(data_store=DataStore.load(), caller_phone="+919812345678")
+    userdata = CallUserdata(
+        knowledge=CanopyKnowledge.load(), caller_phone="+919812345678"
+    )
     session = AgentSession[CallUserdata](
         userdata=userdata,
         llm=inference.LLM(model=TEST_LLM_MODEL),
     )
-    await session.start(agent=RealEstateGroupAssistant())
+    await session.start(agent=CanopyAssistant())
     try:
         yield session
     finally:

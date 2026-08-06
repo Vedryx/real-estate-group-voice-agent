@@ -1,5 +1,0 @@
-{
-  "_comment": "Areas that appear in the original vjrealestates.com site navigation (the historical data source, see plan.md) as areas of interest but have no live project behind them (all '#' placeholder links as of the data snapshot). If a caller asks about one of these, the agent should say The Real Estate Group doesn't currently have a live listing there, offer the nearest actual project, and log the area as an interest lead via log_out_of_area_interest. See plan.md §2.4 item 3 and §4.3.",
-  "city": "Pune",
-  "areas": ["Punawale", "Baner", "Balewadi", "Bavdhan"]
-}
