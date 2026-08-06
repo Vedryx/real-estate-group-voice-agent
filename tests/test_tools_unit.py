@@ -158,6 +158,59 @@ async def test_log_lead_terminal_sets_state(ctx):
     assert ctx.userdata.conversation_stage == "closing"
 
 
+async def test_derive_final_outcome_from_state():
+    """The closing outcome is computed from state, never taken from the LLM."""
+    k = CanopyKnowledge.load()
+
+    site = CallUserdata(knowledge=k, caller_phone="+1")
+    site.next_step = "site_visit_requested"
+    assert catalog._derive_final_outcome(site) == "site_visit_requested"
+
+    cb = CallUserdata(knowledge=k, caller_phone="+1")
+    cb.next_step = "callback_requested"
+    assert catalog._derive_final_outcome(cb) == "callback_requested"
+
+    dnd = CallUserdata(knowledge=k, caller_phone="+1")
+    dnd.interest_status = "opted_out"
+    assert catalog._derive_final_outcome(dnd) == "opted_out"
+
+    browsing = CallUserdata(knowledge=k, caller_phone="+1")
+    browsing.interest_status = "active"
+    assert catalog._derive_final_outcome(browsing) == "info_only_no_lead"
+
+    cold = CallUserdata(knowledge=k, caller_phone="+1")
+    assert catalog._derive_final_outcome(cold) == "spam_or_abandoned"
+
+
+async def test_end_call_takes_no_outcome_arg(ctx):
+    """end_call must not accept an LLM-supplied outcome (it once invented a compound one)."""
+    import inspect
+
+    sig = inspect.signature(catalog.end_call.__wrapped__ if hasattr(catalog.end_call, "__wrapped__") else catalog.end_call)
+    assert "outcome" not in sig.parameters
+
+
+async def test_end_call_derives_and_logs(ctx):
+    ctx.userdata.next_step = "callback_requested"
+    ctx.speech_handle = SimpleNamespace(add_done_callback=lambda cb: None)
+    ctx.session = SimpleNamespace(shutdown=lambda **kw: None)
+    msg = await catalog.end_call(ctx)
+    assert "goodbye" in msg.lower()
+    assert ctx.userdata.lead_logged is True
+
+
+async def test_callback_persist_failure_returns_logged_false(ctx, monkeypatch):
+    """If the write fails, the tool must report logged=False and instruct not to confirm."""
+    def boom(**kwargs):
+        raise TypeError("Object of type MagicMock is not JSON serializable")
+
+    monkeypatch.setattr(catalog.ds, "log_lead", boom)
+    result = await catalog.log_callback(ctx, name="Ravi")
+    assert result["logged"] is False
+    assert "do not tell the caller" in result["instruction"].lower()
+    assert ctx.userdata.lead_logged is False
+
+
 async def test_no_multi_project_tools_remain():
     """The multi-project tools must be gone from the catalog surface."""
     names = {t.info.name for t in catalog.ALL_TOOLS}

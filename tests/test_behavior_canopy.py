@@ -19,6 +19,7 @@ Focus of this suite (the new product's guardrails):
 from __future__ import annotations
 
 from tests.conftest import judge_llm
+from tests.helpers import assert_tool_not_called
 
 
 # --------------------------------------------------- one project only
@@ -98,6 +99,21 @@ async def test_site_visit_is_a_request_not_a_booking(call):
             "treats the site visit as a request and indicates the team will "
             "confirm the final slot (or asks to confirm details) — it does NOT "
             "claim the visit is already booked or confirmed"
+        ),
+    )
+
+
+async def test_ambiguous_negation_does_not_schedule(call):
+    # "Nahi, site visit" is a negated/ambiguous CTA — the agent must NOT fire
+    # schedule_site_visit; it should clarify intent first.
+    result = await call.run(user_input="Nahi, site visit.")
+    assert_tool_not_called(result, "schedule_site_visit")
+    await result.expect.contains_message(role="assistant").judge(
+        judge_llm(),
+        intent=(
+            "does NOT confirm or start arranging a site visit; instead it asks a "
+            "short clarifying question to check whether the caller wants a site "
+            "visit or not"
         ),
     )
 

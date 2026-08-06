@@ -14,7 +14,8 @@ indicative — never a firm figure.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import Any, Literal
 
 from livekit.agents import Agent, RunContext, function_tool
 from livekit.agents.llm import ToolError
@@ -30,6 +31,58 @@ from agent.state import (
     PURCHASE_TIMELINES,
     CallUserdata,
 )
+
+logger = logging.getLogger("The Canopy")
+
+# Failure instruction shared by every persistence tool. The agent MUST NOT tell
+# the caller an action succeeded unless the tool returned logged=True.
+_PERSIST_FAILED = (
+    "Saving failed. Do NOT tell the caller it was saved or sent. Apologise "
+    "briefly, say you'll personally make sure the team has their details, and "
+    "offer to have someone follow up."
+)
+
+# Literal aliases so the tool SCHEMA constrains the model — this stops the LLM
+# inventing values like a compound outcome "callback_requested, not_opposable".
+Config = Literal["2 BHK", "3 BHK"]
+InterestStatus = Literal[
+    "active",
+    "casual",
+    "not_interested",
+    "already_purchased",
+    "accidental_click",
+    "wrong_person",
+    "opted_out",
+]
+Timeline = Literal["unknown", "within_3_months", "3_to_6_months", "over_6_months"]
+Purpose = Literal["unknown", "self_use", "investment"]
+Outcome = Literal[
+    "qualified_lead",
+    "callback_requested",
+    "site_visit_requested",
+    "nurture_lead",
+    "not_interested",
+    "already_purchased",
+    "accidental_click",
+    "wrong_number",
+    "info_only_no_lead",
+    "escalation_needed",
+    "opted_out",
+    "spam_or_abandoned",
+]
+
+
+def _safe_log_lead(**kwargs: Any) -> dict[str, Any] | None:
+    """Persist a lead, converting any failure into a signal instead of a crash.
+
+    Returns the record on success, or None on failure (logged for ops). The
+    caller decides what to tell the customer — never confirm on None.
+    """
+    try:
+        return ds.log_lead(**kwargs)
+    except Exception:  # noqa: BLE001 - never let a write error break the call
+        logger.exception("log_lead failed for outcome=%s", kwargs.get("outcome"))
+        return None
 
 # Money topics with no source in any layer — never guess these.
 UNAVAILABLE_COMMERCIAL_TOPICS = {
@@ -73,12 +126,14 @@ async def get_configurations(context: RunContext[CallUserdata]) -> dict[str, Any
 
 @function_tool
 async def get_unit_details(
-    context: RunContext[CallUserdata], config: str
+    context: RunContext[CallUserdata], config: Config
 ) -> dict[str, Any]:
-    """Get carpet-area details for a configuration once the caller narrows to 2 BHK or 3 BHK.
+    """Get carpet-area details for a config — call this ONLY when the caller asks for specific sizes/layouts, not to open a pitch.
 
     Speak the RERA carpet area as the size. Never quote the larger
-    "carpet + balconies" figure as carpet.
+    "carpet + balconies" figure as carpet. Do not read out every layout — a
+    caller who just mentioned "3 BHK" wants warmth and a nudge to visit, not a
+    spec dump (see the returned note).
 
     Args:
         config: "2 BHK" or "3 BHK".
@@ -93,9 +148,12 @@ async def get_unit_details(
         }
     if normalized in CONFIG_INTERESTS:
         context.userdata.config_interest = normalized
+    carpets = sorted(u["carpet_sqft"] for u in units)
     return {
         "found": True,
         "config": normalized,
+        "layout_count": len(units),
+        "carpet_sqft_range": [carpets[0], carpets[-1]],
         "carpet_area_note": k.carpet_area_note(),
         "layouts": [
             {
@@ -106,11 +164,18 @@ async def get_unit_details(
             }
             for u in units
         ],
+        "note": (
+            "Summarise warmly (e.g. 'we have a few 3 BHK layouts') and suggest seeing them in "
+            "person — do NOT list every layout or its numbers unless the caller specifically "
+            "asks for the sizes/options."
+        ),
     }
 
 
 @function_tool
-async def get_amenities(context: RunContext[CallUserdata], scope: str) -> dict[str, Any]:
+async def get_amenities(
+    context: RunContext[CallUserdata], scope: Literal["building", "township"]
+) -> dict[str, Any]:
     """Get amenities for The Canopy.
 
     Args:
@@ -167,7 +232,7 @@ async def get_rera(context: RunContext[CallUserdata]) -> dict[str, Any]:
 # --------------------------------------------------------------------- Layer 2 (DUMMY)
 @function_tool
 async def get_pricing(
-    context: RunContext[CallUserdata], config: str | None = None
+    context: RunContext[CallUserdata], config: Config | None = None
 ) -> dict[str, Any]:
     """Get the INDICATIVE price band for The Canopy. Always present as indicative, never final.
 
@@ -246,16 +311,18 @@ def _current_lead_kwargs(ud: CallUserdata, notes: str) -> dict[str, Any]:
     }
 
 
+_OUTCOME_TO_INTEREST = {
+    "not_interested": "not_interested",
+    "already_purchased": "already_purchased",
+    "accidental_click": "accidental_click",
+    "wrong_number": "wrong_person",
+    "opted_out": "opted_out",
+}
+
+
 def _apply_outcome_to_state(ud: CallUserdata, outcome: str) -> None:
-    terminal_interest = {
-        "not_interested": "not_interested",
-        "already_purchased": "already_purchased",
-        "accidental_click": "accidental_click",
-        "wrong_number": "wrong_person",
-        "opted_out": "opted_out",
-    }
-    if outcome in terminal_interest:
-        ud.interest_status = terminal_interest[outcome]
+    if outcome in _OUTCOME_TO_INTEREST:
+        ud.interest_status = _OUTCOME_TO_INTEREST[outcome]
         ud.next_step = "no_followup"
     elif outcome == "site_visit_requested":
         ud.next_step = "site_visit_requested"
@@ -268,21 +335,41 @@ def _apply_outcome_to_state(ud: CallUserdata, outcome: str) -> None:
     ud.closing_attempted = True
 
 
+def _derive_final_outcome(ud: CallUserdata) -> str:
+    """Compute the closing outcome deterministically from call state.
+
+    The final outcome is NOT taken from the LLM (it once invented a compound
+    string). It is read off the state the tools already recorded.
+    """
+    reverse = {v: k for k, v in _OUTCOME_TO_INTEREST.items()}
+    if ud.interest_status in reverse:
+        return reverse[ud.interest_status]
+    if ud.next_step == "site_visit_requested":
+        return "site_visit_requested"
+    if ud.next_step == "callback_requested":
+        return "callback_requested"
+    if ud.next_step == "future_followup":
+        return "nurture_lead"
+    if ud.interest_status in {"active", "casual"}:
+        return "info_only_no_lead"
+    return "spam_or_abandoned"
+
+
 @function_tool
 async def record_lead_qualification(
     context: RunContext[CallUserdata],
-    interest_status: str,
-    config_interest: str | None = None,
-    purchase_timeline: str | None = None,
-    purchase_purpose: str | None = None,
+    interest_status: InterestStatus,
+    config_interest: Config | None = None,
+    purchase_timeline: Timeline | None = None,
+    purchase_purpose: Purpose | None = None,
 ) -> dict[str, Any]:
     """Record explicit qualification signals as the caller volunteers them — do not guess.
 
     Args:
-        interest_status: One of active, casual, not_interested, already_purchased, accidental_click, wrong_person, opted_out.
+        interest_status: active, casual, not_interested, already_purchased, accidental_click, wrong_person, or opted_out.
         config_interest: "2 BHK" or "3 BHK", only if stated.
-        purchase_timeline: One of unknown, within_3_months, 3_to_6_months, over_6_months, only if stated.
-        purchase_purpose: One of unknown, self_use, investment, only if stated.
+        purchase_timeline: unknown, within_3_months, 3_to_6_months, or over_6_months, only if stated.
+        purchase_purpose: unknown, self_use, or investment, only if stated.
     """
     if interest_status not in INTEREST_STATUSES - {"unknown"}:
         raise ToolError(
@@ -341,7 +428,9 @@ async def schedule_site_visit(
     kwargs = _current_lead_kwargs(ud, notes=f"Site visit requested, preferred: {preferred_date}")
     kwargs["name"] = resolved_name
     kwargs["caller_phone"] = resolved_phone
-    record = ds.log_lead(outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs)
+    record = _safe_log_lead(outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs)
+    if record is None:
+        return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
     return {
         "logged": True,
@@ -376,7 +465,9 @@ async def log_callback(
     kwargs = _current_lead_kwargs(ud, notes=notes or "Callback requested")
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
-    record = ds.log_lead(outcome="callback_requested", consent_to_be_contacted=True, **kwargs)
+    record = _safe_log_lead(outcome="callback_requested", consent_to_be_contacted=True, **kwargs)
+    if record is None:
+        return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
     return {"logged": True, "lead_id": record["lead_id"]}
 
@@ -384,7 +475,7 @@ async def log_callback(
 @function_tool
 async def log_lead(
     context: RunContext[CallUserdata],
-    outcome: str,
+    outcome: Outcome,
     name: str | None = None,
     phone: str | None = None,
     notes: str = "",
@@ -393,7 +484,7 @@ async def log_lead(
     """Persist a lead outcome (terminal or catch-all). Use schedule_site_visit / log_callback for those specific CTAs instead.
 
     Args:
-        outcome: One of qualified_lead, callback_requested, site_visit_requested, nurture_lead, not_interested, already_purchased, accidental_click, wrong_number, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned.
+        outcome: One of the valid outcomes (qualified_lead, callback_requested, site_visit_requested, nurture_lead, not_interested, already_purchased, accidental_click, wrong_number, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned).
         name: Caller's name if stated anywhere in the call.
         phone: Best callback number if stated.
         notes: Free-text notes.
@@ -408,7 +499,11 @@ async def log_lead(
     kwargs = _current_lead_kwargs(ud, notes)
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
-    record = ds.log_lead(outcome=outcome, consent_to_be_contacted=consent_to_be_contacted, **kwargs)
+    record = _safe_log_lead(
+        outcome=outcome, consent_to_be_contacted=consent_to_be_contacted, **kwargs
+    )
+    if record is None:
+        return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
     return {"logged": True, "lead_id": record["lead_id"], "qualification": ud.qualification_snapshot()}
 
@@ -421,7 +516,7 @@ async def escalate_to_human(context: RunContext[CallUserdata], reason: str) -> A
         reason: Brief reason, e.g. "caller asked for a human" or "caller is upset".
     """
     ud = context.userdata
-    ds.log_lead(
+    _safe_log_lead(
         outcome="escalation_needed",
         consent_to_be_contacted=True,
         **_current_lead_kwargs(ud, notes=reason),
@@ -432,18 +527,14 @@ async def escalate_to_human(context: RunContext[CallUserdata], reason: str) -> A
 
 
 @function_tool
-async def end_call(context: RunContext[CallUserdata], outcome: str) -> str:
-    """Gracefully end the call, tagging the final outcome. If no lead was logged yet, logs one now. Must be the last tool call in a turn — only a brief goodbye after.
-
-    Args:
-        outcome: One of the valid outcomes (see log_lead).
+async def end_call(context: RunContext[CallUserdata]) -> str:
+    """Gracefully end the call. The final outcome is derived deterministically from what was recorded during the call — you do NOT pass it. Must be the last tool call in a turn; only a brief goodbye after.
     """
-    if outcome not in VALID_OUTCOMES:
-        raise ToolError(f"invalid outcome {outcome!r}; must be one of {sorted(VALID_OUTCOMES)}")
     ud = context.userdata
+    outcome = _derive_final_outcome(ud)
     _apply_outcome_to_state(ud, outcome)
     if not ud.lead_logged:
-        ds.log_lead(
+        _safe_log_lead(
             outcome=outcome,
             consent_to_be_contacted=outcome != "opted_out",
             **_current_lead_kwargs(ud, notes="auto-logged at end_call"),
@@ -454,7 +545,7 @@ async def end_call(context: RunContext[CallUserdata], outcome: str) -> str:
         context.session.shutdown()
 
     context.speech_handle.add_done_callback(_on_speech_done)
-    return "Outcome logged. Say a brief, warm goodbye now — nothing else."
+    return "Call is wrapping up. Say a brief, warm goodbye now — nothing else."
 
 
 ALL_TOOLS = [

@@ -99,7 +99,12 @@ def log_lead(
     }
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    # default=str is a safety net: a stray non-serializable value (e.g. a value
+    # that slipped in as a mock/object in some runtime) is coerced to its string
+    # form instead of raising and silently dropping the lead. All real fields
+    # are already JSON-serializable. Any genuine write failure (IO) still raises
+    # and is handled by the tool wrappers, which then refuse to confirm success.
     with log_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
     return record
