@@ -235,13 +235,19 @@ async def entrypoint(ctx: JobContext) -> None:
             "turn_detection": inference.TurnDetector(),
             "endpointing": {
                 "mode": "dynamic",
-                # min_delay raised 0.3 -> 0.6 after a live call: 0.3s was too
-                # eager for natural Hindi/Marathi conversational pauses, letting
-                # the agent take the turn before the caller had finished (it also
-                # fed a mid-thought "Nahi, site visit" into an over-eager CTA).
-                # 0.6s gives a bit more grace for a between-clause pause while
-                # still feeling responsive.
-                "min_delay": 0.6,
+                # min_delay raised 0.3 -> 0.6 -> 1.2 across live calls. Sarvam's
+                # STT is slow and commits an utterance in chunks with a real
+                # pause between clauses (e.g. "Ha, yes yes." <~0.7s> "है क्या?").
+                # With min_delay below that pause the endpointer committed the
+                # turn on the first chunk and the agent talked over the caller,
+                # and the late second chunk arrived as a stray new turn — LiveKit
+                # itself warned: "transcript arrives after turn has been
+                # committed. consider raising min_delay ... to accommodate a slow
+                # stt." 1.2s bridges a normal between-clause pause. It costs a
+                # little end-of-turn latency, but talking over the caller is the
+                # far worse failure for an outbound sales call. The eot model
+                # still extends toward max_delay when it's unsure the turn ended.
+                "min_delay": 1.2,
                 "max_delay": 2.0,
             },
             # Keep preemptive LLM generation, but wait for the turn to be
