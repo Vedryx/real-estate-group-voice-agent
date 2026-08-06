@@ -1,0 +1,33 @@
+{
+  "_comment": "LAYER 2 — commercial data source for The Canopy. DUMMY / PLACEHOLDER values, NOT Paranjape's real pricing. These figures do NOT come from the brochure (the brochure has no commercial data). They exist so the agent can promote the project naturally in a demo. BEFORE ANY REAL CUSTOMER CALL: replace this one file with the real cost sheet and set source to a live value. The agent must ALWAYS speak these as indicative, subject to confirmation by the team — never as final figures.",
+
+  "source": "DUMMY_PLACEHOLDER",
+  "is_dummy": true,
+  "currency": "INR",
+
+  "pricing": [
+    {
+      "config": "2 BHK",
+      "carpet_sqft": 886,
+      "indicative_all_in": "around 95 lakh onwards",
+      "indicative_all_in_value_lakh": 95
+    },
+    {
+      "config": "3 BHK",
+      "carpet_sqft": "1229 to 1276",
+      "indicative_all_in": "around 1 crore 35 lakh onwards",
+      "indicative_all_in_value_lakh": 135
+    }
+  ],
+
+  "possession": {
+    "status": "under construction",
+    "target": "December 2027",
+    "phrasing": "targeted for possession by the end of 2027"
+  },
+
+  "booking_amount": "around 2 lakh to block a unit",
+  "payment_plan": "a construction-linked payment plan is available; the team shares the full schedule",
+
+  "disclaimer": "Indicative only. Final price depends on the floor, view and specific unit, and is confirmed by the sales team. Floor-rise, view premium (PLC), GST, stamp duty, registration, maintenance and parking charges are quoted separately by the team and are not stated here."
+}

@@ -1,0 +1,126 @@
+{
+  "_comment": "LAYER 1 — project fact sheet for The Canopy (Paranjape / Forest Trails). Every project fact the agent speaks (config, carpet, amenity, spec, RERA, location) MUST trace to a field here. Extracted and verified from the 52-page brochure (data/The-Canopy-forest-trails-Brochure_V2.pdf) on 2026-08-07. Commercial numbers (price/possession/payment) are NOT here — they live in canopy_commercial.json (Layer 2). High-level facts + FAQ answers live in canopy_brief.md (Layer 0).",
+
+  "project": "The Canopy",
+  "developer": "Paranjape",
+  "developer_full_name": "Paranjape Schemes (Construction) Ltd.",
+  "developer_tagline": "The Spirit Of New India",
+  "township": "Forest Trails",
+  "township_size_acres": "190+",
+  "address": "Forest Trails Township, Paud Road, Bhugaon, Opposite Manas Lake, Pune 412115",
+  "corporate_office": "'PSC House', Dr. Ketkar Road, Off Prabhat Road, Erandwane, Pune 411004",
+  "developer_regions": ["Maharashtra", "Karnataka", "Gujarat"],
+  "locality_hooks": ["Bhugaon", "Paud Road", "opposite Manas Lake", "Bavdhan", "Forest Trails"],
+  "commute": {
+    "bavdhan_minutes": 10,
+    "phrasing": "about 10 minutes from Bavdhan",
+    "note": "Brochure claim; always phrase as approximate. No exact distances to schools/hospitals/workplaces are confirmed."
+  },
+
+  "rera_number": "P52100079518",
+  "rera_reference": "R48 The Canopy",
+  "rera_portal": "https://maharera.mahaonline.gov.in",
+
+  "contact": { "phone": "+91 95299 33180", "website": "www.pscl.in" },
+
+  "building": {
+    "storeys": 21,
+    "wings": ["A", "B"],
+    "positioning": "premium high-rise on a hill within the township, overlooking the valley",
+    "apartments_per_typical_floor_per_wing": 4,
+    "apartments_per_refuge_floor_per_wing": 3,
+    "lifts_per_wing": "two passenger lifts + one fire lift",
+    "staircases_per_wing": 2
+  },
+  "views": {
+    "valley_deg": 270,
+    "township_deg": 90,
+    "note": "Marketing positioning ('270 degree valley view', '90 degree township view'), not a measured guarantee. Embraced by three hills."
+  },
+
+  "configs": ["2 BHK", "3 BHK"],
+  "unit_types": [
+    { "id": "2bhk-t1",  "config": "2 BHK", "label": "2 BHK Type 1",  "carpet_sqft": 886.30,  "balcony_sqft": 46.06, "dry_balcony_sqft": 27.66, "carpet_plus_balconies_sqft": 960.02,  "wings": ["A", "B"] },
+    { "id": "3bhk-t3",  "config": "3 BHK", "label": "3 BHK Type 3",  "carpet_sqft": 1229.46, "balcony_sqft": 48.11, "dry_balcony_sqft": 31.21, "carpet_plus_balconies_sqft": 1308.78, "wings": ["A", "B"] },
+    { "id": "3bhk-t2a", "config": "3 BHK", "label": "3 BHK Type 2A", "carpet_sqft": 1249.05, "balcony_sqft": 64.79, "dry_balcony_sqft": 41.44, "carpet_plus_balconies_sqft": 1355.28, "wings": ["A"] },
+    { "id": "3bhk-t2b", "config": "3 BHK", "label": "3 BHK Type 2B", "carpet_sqft": 1257.98, "balcony_sqft": 64.79, "dry_balcony_sqft": 41.44, "carpet_plus_balconies_sqft": 1364.21, "wings": ["A"] },
+    { "id": "3bhk-t1",  "config": "3 BHK", "label": "3 BHK Type 1",  "carpet_sqft": 1275.64, "balcony_sqft": 64.79, "dry_balcony_sqft": 41.44, "carpet_plus_balconies_sqft": 1381.87, "wings": ["B"] }
+  ],
+  "carpet_area_note": "The headline size is RERA carpet area. The 'carpet + balconies' figure is carpet PLUS balcony and dry-balcony area, NOT RERA carpet — never quote it as carpet. Only carpet area is confirmed; do not convert to or guess a built-up / super built-up figure.",
+  "config_summary": {
+    "2 BHK": { "carpet_sqft_from": 886.30, "phrasing": "2 BHK around 886 sq ft carpet" },
+    "3 BHK": { "carpet_sqft_from": 1229.46, "carpet_sqft_to": 1275.64, "phrasing": "3 BHK roughly 1230 to 1276 sq ft carpet, across a few layouts" }
+  },
+
+  "amenities_building": {
+    "kaylasha_activity_centre": [
+      "swimming pool (on the 21st floor)",
+      "pool deck",
+      "gymnasium (on the 21st floor)",
+      "yoga and meditation area",
+      "sky-deck"
+    ],
+    "evrest_arena": [
+      "business lounge (work / take calls / meetings without leaving the building)",
+      "recreational centre",
+      "indoor games",
+      "social and leisure spaces"
+    ],
+    "note": "Kaylasha and Evrest are the two branded in-building activity zones. Pool and gym are at the 21st-floor clubhouse level."
+  },
+  "amenities_township": {
+    "list": [
+      "tennis courts",
+      "cricket ground",
+      "equestrian centre",
+      "The Cliff Restaurant",
+      "The Cliff Lifestyle Club",
+      "The Cliff Sports Club",
+      "shopping complex",
+      "convenient shopping",
+      "vegetable market",
+      "healthcare zone",
+      "Sri Sri Ravishankar Vidya Mandir school",
+      "primary and secondary school",
+      "fire station",
+      "walking trails",
+      "landscaped gardens",
+      "multipurpose hall",
+      "arena"
+    ],
+    "caveat": "Select township amenities are PAID facilities and may incur additional charges, and SOME ARE STILL UNDER DEVELOPMENT. Membership of The Cliff (its lifestyle and sports clubs) is specifically available at extra cost. Never imply these are free or already complete."
+  },
+  "township_utilities": [
+    "solid-waste management",
+    "sewage-treatment plant",
+    "rainwater harvesting",
+    "water-treatment plant",
+    "wide internal roads",
+    "three-tier security"
+  ],
+
+  "specifications": {
+    "flooring": "Vitrified tiles in living, dining, kitchen and bedrooms (Asian / Kajaria / Zeal Top or equivalent); ceramic tiles in toilets; toilet dado up to lintel level; dado above the kitchen platform.",
+    "kitchen": "Kitchen platform with stainless-steel sink (Nirali / Franke or equivalent). No modular kitchen, hob, chimney, refrigerator or other appliances promised.",
+    "doors": "Flush doors with laminate on both sides (Sunrise / Shreeji / Kalpataru or equivalent; Sundek laminate or equivalent). Powder-coated aluminium sliding terrace doors with glass (Jindal or equivalent).",
+    "windows": "Powder-coated aluminium sliding windows (Jindal or equivalent).",
+    "walls_finishes": "Gypsum punning and plastic-emulsion paint on internal walls, excluding terrace/toilet/utility (Asian / Nerolac / ICI / Berger or equivalent).",
+    "electrical": "Concealed wiring with modular switches (Legrand / Schneider / Philips / Anchor or equivalent). TV point in living room. AC electrical point in every bedroom.",
+    "plumbing": "Concealed plumbing with CP fixtures (Prince / Astral / Ashirwad / Finolex / Supreme or equivalent). CP fixtures Jaguar / Roca / Cera / Grohe / Asian or equivalent. Sanitary fittings Roca / Cera / Kohler / Jaguar / RAK or equivalent.",
+    "provisions": "Electrical + plumbing provision for a water heater in toilets; electrical provision for an exhaust fan in all toilets.",
+    "brands_note": "All brands are stated 'or equivalent' in the brochure — present them as indicative, not guaranteed final brands."
+  },
+
+  "floor_structure": {
+    "typical_floors": "1-6, 8-11, 13-16, 18-20",
+    "refuge_floors": [7, 12, 17],
+    "clubhouse_floor": 21,
+    "note": "Refuge floors have three apartments per wing plus refuge/amenity area. The 21st floor is the clubhouse level (gym in Wing A, swimming pool + pool deck in Wing B)."
+  },
+
+  "site_layout": ["entry/exit gate", "security cabin", "parking", "open landscaped area", "building entries", "driveway around the structure"],
+  "parking_note": "Parking is provided, but the brochure does not state how many spaces each apartment receives — route parking allocation questions to the team.",
+
+  "media_caveat": "Many building and lifestyle images in the brochure are artistic impressions / conceptual images, not photographs of the finished building — never describe renders as actual photos.",
+  "legal_caveat": "Plans, specifications and images are indicative and the developer may change them. The brochure is not a contract or offer; the signed agreement for sale governs the transaction. Some Forest Trails amenities are still under construction. Buyers should confirm details at the sales office."
+}
