@@ -87,14 +87,30 @@ def _write_ack_line(lang: str | None) -> str:
     return "Ek second, main note kar leta hoon..."
 
 
+def _say_line(session, text: str) -> bool:
+    """Speak a fixed, deterministic line — mode-aware.
+
+    Cascade (has a TTS): say() it directly and return True, so the caller raises
+    StopResponse to skip the extra LLM turn (C1 behaviour, unchanged).
+    S2S (Gemini RealtimeModel, no TTS): say() is unsupported and raises, so this
+    returns False and speaks nothing — the caller instead returns the line in the
+    tool result and lets the realtime model verbalize it naturally.
+    """
+    if getattr(session, "tts", None) is None:
+        return False
+    session.say(text)
+    return True
+
+
 def _speak_write_ack(context: RunContext[CallUserdata], ud: CallUserdata) -> None:
     """Say the write-ack ONCE per call (founder: never repeat the phrase in one
     call). Fires right before an actual persistence write, after validation has
-    passed — so a failed/premature tool call never triggers it."""
+    passed — so a failed/premature tool call never triggers it. No-ops in S2S
+    (the realtime model speaks the confirmation itself)."""
     if ud.write_ack_spoken:
         return
-    ud.write_ack_spoken = True
-    context.session.say(_write_ack_line(ud.preferred_language))
+    if _say_line(context.session, _write_ack_line(ud.preferred_language)):
+        ud.write_ack_spoken = True
 
 
 async def _log_with_filler(
@@ -404,11 +420,12 @@ async def request_site_visit(
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
     # C1: speak a deterministic confirmation directly (no extra LLM turn), then
-    # stop the model from generating a second reply.
-    context.session.say(
-        _cta_confirmation("visit", resolved_name, preferred_date, ud.preferred_language)
-    )
-    raise StopResponse()
+    # stop the model from generating a second reply. In S2S there's no TTS to
+    # say() through, so return the line and let the realtime model speak it.
+    confirmation = _cta_confirmation("visit", resolved_name, preferred_date, ud.preferred_language)
+    if _say_line(context.session, confirmation):
+        raise StopResponse()
+    return {"logged": True, "say_to_caller": confirmation}
 
 
 @function_tool
@@ -449,11 +466,14 @@ async def request_callback(
     if record is None:
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
-    # C1: deterministic confirmation, no extra LLM turn.
-    context.session.say(
-        _cta_confirmation("callback", name or ud.caller_name, preferred_time, ud.preferred_language)
+    # C1: deterministic confirmation, no extra LLM turn (cascade). In S2S, return
+    # the line for the realtime model to speak (no TTS to say() through).
+    confirmation = _cta_confirmation(
+        "callback", name or ud.caller_name, preferred_time, ud.preferred_language
     )
-    raise StopResponse()
+    if _say_line(context.session, confirmation):
+        raise StopResponse()
+    return {"logged": True, "say_to_caller": confirmation}
 
 
 @function_tool

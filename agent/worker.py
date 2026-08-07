@@ -421,7 +421,10 @@ async def entrypoint(ctx: JobContext) -> None:
         err = ev.error
         if isinstance(err, LLMError) and not err.recoverable:
             logger.warning("Unrecoverable LLM error; playing recovery line: %s", err.label)
-            session.say("Sorry, ek second—main detail dobara check kar raha hoon.")
+            # say() needs a TTS; in S2S (RealtimeModel, no TTS) it would raise, so
+            # skip the canned line there — the realtime model recovers on its own.
+            if getattr(session, "tts", None) is not None:
+                session.say("Sorry, ek second—main detail dobara check kar raha hoon.")
 
     session.on("error", _on_error)
 

@@ -31,8 +31,17 @@ class CanopyAssistant(Agent):
     async def on_enter(self) -> None:
         # Load the working brief + state into the prompt for the turns that follow.
         await self.update_instructions(instructions_for_call(self.session.userdata))
-        # C4: the opener is a FIXED line, so speak it directly via say() instead of
-        # generate_reply() — this drops the ~3-4s cold first-token LLM latency from
-        # the greeting path (only TTS cold-start remains). allow_interruptions=False
-        # keeps SIP call-setup noise from cancelling it before it plays.
-        self.session.say(OPENER, allow_interruptions=False)
+        # Speak the opener FIRST (outbound call — agent must open, not wait).
+        if self.session.tts is None:
+            # S2S / RealtimeModel path: there is no TTS to feed say() (it raises
+            # "RealtimeSession that supports say()"), so drive the greeting through
+            # the model itself. It reproduces the fixed opener verbatim.
+            self.session.generate_reply(
+                instructions=f"Start the call now. Say exactly this and nothing else: {OPENER}"
+            )
+        else:
+            # C4 (cascade): the opener is a FIXED line, so speak it directly via
+            # say() instead of generate_reply() — drops the cold first-token LLM
+            # latency from the greeting. allow_interruptions=False keeps SIP
+            # call-setup noise from cancelling it before it plays.
+            self.session.say(OPENER, allow_interruptions=False)
