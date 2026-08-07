@@ -26,8 +26,12 @@ def ud() -> CallUserdata:
 @pytest.fixture
 def ctx(ud):
     # session.say is used for deterministic confirmations (C1) and the slow-op
-    # filler (C2); a no-op stub is enough for these logic tests.
-    return SimpleNamespace(userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None))
+    # filler (C2); a no-op stub is enough for these logic tests. tts is a truthy
+    # sentinel so _say_line takes the cascade say()+StopResponse path (tts=None
+    # would select the S2S branch, which returns instead of raising).
+    return SimpleNamespace(
+        userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None, tts=object())
+    )
 
 
 # --------------------------------------------------- get_detailed_project_info
@@ -113,7 +117,9 @@ def test_cta_ready_needs_two_buying_signals():
 
 # --------------------------------------------------- CTAs / terminal
 async def test_request_site_visit_requires_name_and_phone(ud):
-    ctx = SimpleNamespace(userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None))
+    ctx = SimpleNamespace(
+        userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None, tts=object())
+    )
     with pytest.raises(ToolError):
         await catalog.request_site_visit(ctx, preferred_date="Saturday")
 
@@ -125,6 +131,18 @@ async def test_request_site_visit_records_and_confirms(ctx):
     assert ctx.userdata.lead_logged is True
     assert ctx.userdata.site_visit_offered is True
     assert ctx.userdata.cta_offer_count == 1
+
+
+async def test_request_site_visit_s2s_returns_line_without_stopresponse(ud):
+    # S2S: no TTS -> _say_line can't say(); the tool must NOT raise StopResponse
+    # and instead return the confirmation for the realtime model to speak.
+    ud.caller_phone = "+919812345678"
+    ctx = SimpleNamespace(userdata=ud, session=SimpleNamespace(tts=None))
+    result = await catalog.request_site_visit(ctx, preferred_date="kal 4 baje", name="Asha")
+    assert result["logged"] is True
+    assert result["say_to_caller"]  # localized confirmation line for the model
+    assert ud.lead_logged is True
+    assert ud.write_ack_spoken is False  # write-ack no-ops in S2S
 
 
 async def test_request_callback_records_and_confirms(ctx):
