@@ -50,6 +50,7 @@ from livekit.plugins import google, noise_cancellation, sarvam, silero
 
 from agent.assistant import CanopyAssistant
 from agent.canopy import CanopyKnowledge
+from agent.persona import instructions_for_call
 from agent.state import CallUserdata, select_language
 
 load_dotenv()
@@ -456,8 +457,14 @@ async def entrypoint(ctx: JobContext) -> None:
     session.on("user_state_changed", _on_user_state)
     session.on("agent_state_changed", _on_agent_state)
 
+    # In s2s, hand the full persona+brief instructions in at construction so the
+    # agent never calls update_instructions() before the realtime session is
+    # active (which would reconnect and time out the opener). Cascade builds them
+    # per turn in on_enter/on_user_turn_completed.
+    s2s_instructions = instructions_for_call(userdata) if VOICE_MODE == "s2s" else None
+
     await session.start(
-        agent=CanopyAssistant(),
+        agent=CanopyAssistant(s2s_instructions),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             # Telephony-tuned Krisp noise cancellation - real phone calls

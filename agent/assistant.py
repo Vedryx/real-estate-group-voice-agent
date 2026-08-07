@@ -15,8 +15,19 @@ from tools.catalog import ALL_TOOLS
 
 
 class CanopyAssistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions=instructions_for_language(None), tools=ALL_TOOLS)
+    def __init__(self, instructions: str | None = None) -> None:
+        # In s2s the full persona+brief instructions are passed at construction
+        # (see worker), because calling update_instructions() on the Gemini
+        # realtime session BEFORE it is active triggers a reconnect that makes
+        # the opener's generate_reply() time out. Cascade builds them per turn.
+        super().__init__(
+            instructions=instructions or instructions_for_language(None),
+            tools=ALL_TOOLS,
+        )
+
+    def _is_s2s(self) -> bool:
+        # No TTS on the session == Gemini RealtimeModel (speech-to-speech).
+        return getattr(self.session, "tts", None) is None
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
@@ -26,22 +37,26 @@ class CanopyAssistant(Agent):
         update_qualification_from_text(
             self.session.userdata, getattr(new_message, "text_content", "") or ""
         )
+        # Safe in both modes here: by the first user turn the realtime session is
+        # active, so this is a mid-session instruction update (mutable_instructions
+        # is True for the native-audio model) — no reconnect.
         await self.update_instructions(instructions_for_call(self.session.userdata))
 
     async def on_enter(self) -> None:
-        # Load the working brief + state into the prompt for the turns that follow.
-        await self.update_instructions(instructions_for_call(self.session.userdata))
-        # Speak the opener FIRST (outbound call — agent must open, not wait).
-        if self.session.tts is None:
-            # S2S / RealtimeModel path: there is no TTS to feed say() (it raises
-            # "RealtimeSession that supports say()"), so drive the greeting through
-            # the model itself. It reproduces the fixed opener verbatim.
-            self.session.generate_reply(
+        if self._is_s2s():
+            # Instructions were set at construction. Do NOT update_instructions
+            # here (pre-active-session update => reconnect => greeting timeout).
+            # Drive the opener through the model; it reproduces the fixed line.
+            handle = self.session.generate_reply(
                 instructions=f"Start the call now. Say exactly this and nothing else: {OPENER}"
             )
-        else:
-            # C4 (cascade): the opener is a FIXED line, so speak it directly via
-            # say() instead of generate_reply() — drops the cold first-token LLM
-            # latency from the greeting. allow_interruptions=False keeps SIP
-            # call-setup noise from cancelling it before it plays.
-            self.session.say(OPENER, allow_interruptions=False)
+            try:
+                await handle
+            except Exception:  # noqa: BLE001 - if the greeting races connect setup,
+                # fall back silently; the model still greets on the first user turn.
+                pass
+            return
+        # Cascade: load brief + state, then speak the fixed opener via say() —
+        # drops the cold first-token LLM latency from the greeting (C4).
+        await self.update_instructions(instructions_for_call(self.session.userdata))
+        self.session.say(OPENER, allow_interruptions=False)
