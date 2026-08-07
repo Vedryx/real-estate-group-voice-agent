@@ -158,6 +158,30 @@ async def test_log_lead_terminal_sets_state(ctx):
     assert ctx.userdata.conversation_stage == "closing"
 
 
+async def test_cta_ready_needs_two_buying_signals():
+    k = CanopyKnowledge.load()
+    ud = CallUserdata(knowledge=k)
+    assert ud.cta_ready is False  # nothing yet
+    ud.config_interest = "3 BHK"  # 1 signal
+    assert ud.cta_ready is False
+    ud.purchase_timeline_asked = True  # 2 signals
+    assert ud.cta_ready is True
+    ud.site_visit_declined = True  # a decline overrides
+    assert ud.cta_ready is False
+
+
+async def test_schedule_site_visit_records_cta_offer(ctx):
+    await catalog.schedule_site_visit(ctx, preferred_date="Saturday", name="Asha")
+    assert ctx.userdata.site_visit_offered is True
+    assert ctx.userdata.cta_offer_count == 1
+
+
+async def test_terminal_outcome_marks_site_visit_declined(ctx):
+    await catalog.log_lead(ctx, outcome="not_interested", consent_to_be_contacted=True)
+    assert ctx.userdata.site_visit_declined is True
+    assert ctx.userdata.cta_ready is False
+
+
 async def test_derive_final_outcome_from_state():
     """The closing outcome is computed from state, never taken from the LLM."""
     k = CanopyKnowledge.load()

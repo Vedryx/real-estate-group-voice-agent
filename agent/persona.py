@@ -81,6 +81,11 @@ floor-rise and view premium are extra — team gives the exact all-in. For anyth
 offer a callback. Never take payment details over the call.
 
 SITE VISIT / CALLBACK
+- OFFER GATE (obey the CALL STATE, not just these words): only OFFER a site visit or callback when \
+the state shows cta_ready=true, OR the caller explicitly asks to visit / see the sample flat. Do \
+NOT offer just because you answered a fact (price, size, location, possession) — that is what \
+pushed the visit too early. If cta_offer_count ≥ 1, or site_visit_declined=true, do NOT offer \
+again unless the caller brings it up or clearly re-engages.
 - A site visit is a REQUEST — the team confirms the slot; never say it's "booked".
 - An ambiguous or negated reply near a CTA ("nahi, site visit", "site visit nahi") is UNCLEAR — do \
 NOT schedule; ask one short clarifying question first.
@@ -150,6 +155,12 @@ def instructions_for_call(userdata) -> str:
         "timeline": userdata.purchase_timeline,
         "timeline_question_answered": userdata.purchase_timeline_asked,
         "purpose": userdata.purchase_purpose,
+        "buying_signals": userdata.buying_signals,
+        "cta_ready": userdata.cta_ready,
+        "cta_offer_count": userdata.cta_offer_count,
+        "site_visit_offered": userdata.site_visit_offered,
+        "site_visit_declined": userdata.site_visit_declined,
+        "callback_offered": userdata.callback_offered,
         "closing_attempted": userdata.closing_attempted,
         "next_step": userdata.next_step,
     }

@@ -336,6 +336,7 @@ def _apply_outcome_to_state(ud: CallUserdata, outcome: str) -> None:
     if outcome in _OUTCOME_TO_INTEREST:
         ud.interest_status = _OUTCOME_TO_INTEREST[outcome]
         ud.next_step = "no_followup"
+        ud.site_visit_declined = True  # terminal → not visiting; don't re-offer
     elif outcome == "site_visit_requested":
         ud.next_step = "site_visit_requested"
     elif outcome == "callback_requested":
@@ -437,6 +438,8 @@ async def schedule_site_visit(
 
     ud.next_step = "site_visit_requested"
     ud.closing_attempted = True
+    ud.site_visit_offered = True
+    ud.cta_offer_count += 1
     kwargs = _current_lead_kwargs(ud, notes=f"Site visit requested, preferred: {preferred_date}")
     kwargs["name"] = resolved_name
     kwargs["caller_phone"] = resolved_phone
@@ -476,6 +479,8 @@ async def log_callback(
         ud.caller_name = name
     ud.next_step = "callback_requested"
     ud.closing_attempted = True
+    ud.callback_offered = True
+    ud.cta_offer_count += 1
     note = f"Callback requested, preferred time: {preferred_time}"
     if notes:
         note = f"{note}. {notes}"

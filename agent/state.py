@@ -158,11 +158,43 @@ class CallUserdata:
 
     next_step: str = "none"
     closing_attempted: bool = False
+
+    # CTA control (B): structured memory so the agent doesn't offer a visit /
+    # callback twice, and a deterministic gate for WHEN to offer at all.
+    site_visit_offered: bool = False
+    site_visit_declined: bool = False
+    callback_offered: bool = False
+    cta_offer_count: int = 0
+
     lead_logged: bool = False
     # Outcomes already written this call — prevents logging the same callback /
     # site-visit twice (the model once called log_callback and then log_lead
     # with the same outcome at close).
     logged_outcomes: set[str] = field(default_factory=set)
+
+    @property
+    def buying_signals(self) -> int:
+        """Count of explicit buying signals — drives the CTA gate."""
+        signals = 0
+        if self.config_interest:
+            signals += 1
+        if self.purchase_timeline_asked or self.purchase_timeline != "unknown":
+            signals += 1
+        if self.purchase_purpose != "unknown":
+            signals += 1
+        if self.interest_status == "active":
+            signals += 1
+        return signals
+
+    @property
+    def cta_ready(self) -> bool:
+        """Code-driven CTA gate (B2): only offer a visit/callback once enough
+        buying signals exist — NOT merely because a project fact was answered.
+        A caller explicitly asking to visit bypasses this (handled in persona).
+        """
+        if self.site_visit_declined:
+            return False
+        return self.buying_signals >= 2
 
     @property
     def conversation_stage(self) -> str:
