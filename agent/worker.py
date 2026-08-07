@@ -44,7 +44,6 @@ from livekit.agents.voice.events import (
     ConversationItemAddedEvent,
     ErrorEvent,
     UserInputTranscribedEvent,
-    UserStateChangedEvent,
 )
 from livekit.plugins import google, noise_cancellation, sarvam, silero
 
@@ -101,6 +100,13 @@ def _build_realtime_llm() -> LLM:
         # Keep text transcripts flowing for observability + our turn logging.
         "input_audio_transcription": genai_types.AudioTranscriptionConfig(),
         "output_audio_transcription": genai_types.AudioTranscriptionConfig(),
+        # Native-audio models have a small context window and audio tokens pile
+        # up fast — a mid-call session died with 1007 "context exhausted". A
+        # sliding window keeps the session alive on long calls by compressing
+        # older turns instead of overflowing.
+        "context_window_compression": genai_types.ContextWindowCompressionConfig(
+            sliding_window=genai_types.SlidingWindow()
+        ),
     }
     if S2S_MODEL:
         kwargs["model"] = S2S_MODEL
@@ -432,29 +438,28 @@ async def entrypoint(ctx: JobContext) -> None:
 
     session.on("error", _on_error)
 
-    # Perceived-latency tracker — the human-felt gap from the caller going quiet
-    # to the agent starting to speak. Works in BOTH modes and is the ONLY latency
-    # signal in s2s (the realtime path emits no ttft/tts_ttfb/e2e cascade metrics).
-    # Measured the same way in both so cascade (~2.9s) and s2s are comparable.
-    _perceived = {"user_quiet_at": None}
+    # Perceived agent-response latency: from the user's FINAL transcript (they've
+    # stopped, words are in) to the agent starting to speak. Anchoring on the
+    # final transcript — NOT user_state — avoids counting the caller's own think/
+    # speak time (which made earlier numbers balloon to 8-24s). Works in both
+    # modes; the only latency signal in s2s (no cascade ttft/e2e metrics there).
+    _perceived = {"anchor": None}
 
-    def _on_user_state(ev: UserStateChangedEvent) -> None:
-        # User just stopped speaking -> start the clock (last pause wins).
-        if ev.new_state == "listening":
-            _perceived["user_quiet_at"] = time.monotonic()
+    def _on_user_final_for_latency(ev: UserInputTranscribedEvent) -> None:
+        if ev.is_final:
+            _perceived["anchor"] = time.monotonic()
 
     def _on_agent_state(ev: AgentStateChangedEvent) -> None:
-        # Agent audio begins -> log the gap since the caller went quiet.
-        started = _perceived["user_quiet_at"]
-        if ev.new_state == "speaking" and started is not None:
+        anchor = _perceived["anchor"]
+        if ev.new_state == "speaking" and anchor is not None:
             logger.info(
-                "Perceived latency (user-quiet -> agent-speaking): %.2fs [mode=%s]",
-                time.monotonic() - started,
+                "Perceived latency (user-final -> agent-speaking): %.2fs [mode=%s]",
+                time.monotonic() - anchor,
                 VOICE_MODE,
             )
-            _perceived["user_quiet_at"] = None
+            _perceived["anchor"] = None
 
-    session.on("user_state_changed", _on_user_state)
+    session.on("user_input_transcribed", _on_user_final_for_latency)
     session.on("agent_state_changed", _on_agent_state)
 
     # In s2s, hand the full persona+brief instructions in at construction so the

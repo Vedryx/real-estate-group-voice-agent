@@ -37,10 +37,12 @@ class CanopyAssistant(Agent):
         update_qualification_from_text(
             self.session.userdata, getattr(new_message, "text_content", "") or ""
         )
-        # Safe in both modes here: by the first user turn the realtime session is
-        # active, so this is a mid-session instruction update (mutable_instructions
-        # is True for the native-audio model) — no reconnect.
-        await self.update_instructions(instructions_for_call(self.session.userdata))
+        # S2S: do NOT re-inject instructions per turn. The full persona+brief is
+        # already set at construction, and re-sending ~1800 tokens every turn
+        # blows the native-audio model's small context window (a call died with
+        # 1007 "context exhausted"). Cascade rebuilds cheaply, so keep it there.
+        if not self._is_s2s():
+            await self.update_instructions(instructions_for_call(self.session.userdata))
 
     async def on_enter(self) -> None:
         if self._is_s2s():
