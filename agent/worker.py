@@ -78,39 +78,66 @@ FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "").strip()
 #                         audio-out, replacing all three. Needs GOOGLE_API_KEY.
 # Tools, persona and state are identical across both modes.
 VOICE_MODE = os.getenv("VOICE_MODE", "cascade").strip().lower()
-# Empty -> plugin default (gemini-2.5-flash-native-audio-preview-12-2025).
+# Which realtime provider when VOICE_MODE=s2s: "gemini" (default) or "openai".
+S2S_PROVIDER = os.getenv("S2S_PROVIDER", "gemini").strip().lower()
+# Model override. Applied per provider (a gemini id is ignored for openai and
+# vice-versa). Blank -> that provider's default.
 S2S_MODEL = os.getenv("S2S_MODEL", "").strip()
-# Gemini Live prebuilt voice name (Puck/Charon/Kore/Fenrir/Aoede/...).
+# Prebuilt voice. Gemini: Puck/Charon/Kore/Fenrir/Aoede. OpenAI: marin/cedar/
+# alloy/echo/shimmer/... A voice from the wrong family falls back to a default.
 S2S_VOICE = os.getenv("S2S_VOICE", "Puck").strip() or "Puck"
+
+_GEMINI_VOICES = {"Puck", "Charon", "Kore", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr"}
 
 
 def _build_realtime_llm() -> LLM:
-    """Build the Gemini Live speech-to-speech model (VOICE_MODE=s2s).
+    """Build the speech-to-speech model (VOICE_MODE=s2s) for the chosen provider.
 
-    One realtime model replaces the STT+LLM+TTS trio. api_key is read from
-    GOOGLE_API_KEY (via the env) if not passed. input/output transcription is
-    enabled so the conversation still shows up as text in the turn-metrics logs.
+    One realtime model replaces the STT+LLM+TTS trio. Tools/persona/state are the
+    same either way; only the audio brain differs.
     """
+    if S2S_PROVIDER == "openai":
+        return _build_openai_realtime()
+    return _build_gemini_realtime()
+
+
+def _build_gemini_realtime() -> LLM:
     from google.genai import types as genai_types
     from livekit.plugins.google.realtime import RealtimeModel
 
     kwargs: dict[str, Any] = {
-        "voice": S2S_VOICE,
+        "voice": S2S_VOICE if S2S_VOICE in _GEMINI_VOICES else "Puck",
         "temperature": 0.8,
         # Keep text transcripts flowing for observability + our turn logging.
         "input_audio_transcription": genai_types.AudioTranscriptionConfig(),
         "output_audio_transcription": genai_types.AudioTranscriptionConfig(),
         # Native-audio models have a small context window and audio tokens pile
         # up fast — a mid-call session died with 1007 "context exhausted". A
-        # sliding window keeps the session alive on long calls by compressing
-        # older turns instead of overflowing.
+        # sliding window keeps the session alive on long calls.
         "context_window_compression": genai_types.ContextWindowCompressionConfig(
             sliding_window=genai_types.SlidingWindow()
         ),
     }
-    if S2S_MODEL:
+    if S2S_MODEL.startswith("gemini"):
         kwargs["model"] = S2S_MODEL
     api_key = os.getenv("GOOGLE_API_KEY")
+    if api_key:
+        kwargs["api_key"] = api_key
+    return RealtimeModel(**kwargs)
+
+
+def _build_openai_realtime() -> LLM:
+    """OpenAI Realtime (gpt-realtime-mini by default). Needs OPENAI_API_KEY +
+    billing — there is no free realtime tier. generate_reply IS supported here,
+    so the proactive opener works (unlike gemini-3.1-flash-live)."""
+    from livekit.plugins.openai.realtime import RealtimeModel
+
+    kwargs: dict[str, Any] = {
+        "model": S2S_MODEL if S2S_MODEL.startswith("gpt") else "gpt-realtime-mini",
+        # A gemini voice name would be invalid here; fall back to an OpenAI voice.
+        "voice": "marin" if S2S_VOICE in _GEMINI_VOICES else S2S_VOICE,
+    }
+    api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
         kwargs["api_key"] = api_key
     return RealtimeModel(**kwargs)
@@ -283,8 +310,9 @@ async def entrypoint(ctx: JobContext) -> None:
         # own server-side turn detection. Tools, persona and state are unchanged.
         realtime_llm = _build_realtime_llm()
         logger.info(
-            "VOICE MODE: s2s (Gemini Live) model=%s voice=%s",
-            S2S_MODEL or "<plugin default>",
+            "VOICE MODE: s2s provider=%s model=%s voice=%s",
+            S2S_PROVIDER,
+            S2S_MODEL or "<provider default>",
             S2S_VOICE,
         )
         try:
