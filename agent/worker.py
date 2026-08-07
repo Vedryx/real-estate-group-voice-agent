@@ -232,17 +232,29 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         llm=llm,
         turn_handling={
-            "turn_detection": inference.TurnDetector(),
+            # The v1 audio turn detector predicts end-of-turn from audio
+            # (semantic + acoustic), NOT from the transcript. A live call showed
+            # it committing on a short affirmation ("Ha, yes yes.", EOU prob 0.767
+            # > the default hi threshold ~0.575) while the caller was still mid-
+            # thought. The doc-sanctioned lever for that is unlikely_threshold
+            # (higher = more patient / needs more confidence to end the turn), NOT
+            # cranking min_delay (which fights the detector's design). Raise hi and
+            # en so the model waits for stronger EOU evidence in Indian-accented /
+            # code-mixed speech. Note: Marathi is NOT among the detector's 14
+            # supported languages, so mr-IN calls fall back to the English
+            # threshold -> "en" covers them too.
+            "turn_detection": inference.TurnDetector(
+                unlikely_threshold={"hi": 0.70, "en": 0.65},
+            ),
+            # Endpointing back at the documented audio-detector defaults
+            # (min 0.3 / max 2.5). With the audio model giving a confident signal,
+            # these delays are meant to be short; patience comes from the
+            # threshold above. max 2.5 gives a genuinely hesitant/long utterance
+            # room before the turn is force-committed.
             "endpointing": {
                 "mode": "dynamic",
-                # min_delay raised 0.3 -> 0.6 after a live call: 0.3s was too
-                # eager for natural Hindi/Marathi conversational pauses, letting
-                # the agent take the turn before the caller had finished (it also
-                # fed a mid-thought "Nahi, site visit" into an over-eager CTA).
-                # 0.6s gives a bit more grace for a between-clause pause while
-                # still feeling responsive.
-                "min_delay": 0.6,
-                "max_delay": 2.0,
+                "min_delay": 0.3,
+                "max_delay": 2.5,
             },
             # Keep preemptive LLM generation, but wait for the turn to be
             # confirmed before synthesizing speech. This avoids generating

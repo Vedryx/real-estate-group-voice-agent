@@ -446,23 +446,28 @@ async def schedule_site_visit(
 @function_tool
 async def log_callback(
     context: RunContext[CallUserdata],
+    preferred_time: str,
     name: str | None = None,
     phone: str | None = None,
     notes: str = "",
 ) -> dict[str, Any]:
-    """Capture a CALLBACK request (the fallback next step when a site visit isn't set).
+    """Capture a CALLBACK request (the fallback next step when a site visit isn't set). Ask the caller what time suits them BEFORE calling this — don't call it with a guessed time.
 
     Args:
+        preferred_time: The caller's preferred callback time in their own words, e.g. "kal shaam" or "evening after 6".
         name: Caller's name if stated anywhere in the call.
         phone: Best callback number if stated (falls back to the known caller number).
-        notes: Anything the team should know before calling back.
+        notes: Anything else the team should know before calling back.
     """
     ud = context.userdata
     if name:
         ud.caller_name = name
     ud.next_step = "callback_requested"
     ud.closing_attempted = True
-    kwargs = _current_lead_kwargs(ud, notes=notes or "Callback requested")
+    note = f"Callback requested, preferred time: {preferred_time}"
+    if notes:
+        note = f"{note}. {notes}"
+    kwargs = _current_lead_kwargs(ud, notes=note)
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
     record = _safe_log_lead(outcome="callback_requested", consent_to_be_contacted=True, **kwargs)

@@ -139,7 +139,7 @@ async def test_schedule_site_visit_logs_request(ctx):
 
 
 async def test_log_callback_logs_and_sets_next_step(ctx):
-    result = await catalog.log_callback(ctx, name="Ravi", notes="prefers evening")
+    result = await catalog.log_callback(ctx, preferred_time="kal shaam", name="Ravi")
     assert result["logged"] is True
     assert ctx.userdata.next_step == "callback_requested"
 
@@ -205,7 +205,7 @@ async def test_callback_persist_failure_returns_logged_false(ctx, monkeypatch):
         raise TypeError("Object of type MagicMock is not JSON serializable")
 
     monkeypatch.setattr(catalog.ds, "log_lead", boom)
-    result = await catalog.log_callback(ctx, name="Ravi")
+    result = await catalog.log_callback(ctx, preferred_time="evening", name="Ravi")
     assert result["logged"] is False
     assert "do not tell the caller" in result["instruction"].lower()
     assert ctx.userdata.lead_logged is False
