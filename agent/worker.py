@@ -77,9 +77,15 @@ FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "").strip()
 #   "s2s"               = a single Gemini Live realtime model does audio-in/
 #                         audio-out, replacing all three. Needs GOOGLE_API_KEY.
 # Tools, persona and state are identical across both modes.
+# ONE knob for the whole voice pipeline:
+#   cascade -> Sarvam STT + text LLM (LLM_MODEL) + Sarvam TTS
+#   gemini  -> Gemini Live speech-to-speech
+#   openai  -> OpenAI Realtime speech-to-speech
+# Legacy: VOICE_MODE=s2s still works — it resolves to S2S_PROVIDER (default gemini).
 VOICE_MODE = os.getenv("VOICE_MODE", "cascade").strip().lower()
-# Which realtime provider when VOICE_MODE=s2s: "gemini" (default) or "openai".
-S2S_PROVIDER = os.getenv("S2S_PROVIDER", "gemini").strip().lower()
+if VOICE_MODE == "s2s":
+    VOICE_MODE = os.getenv("S2S_PROVIDER", "gemini").strip().lower()
+IS_S2S = VOICE_MODE in {"gemini", "openai"}
 # Model override. Applied per provider (a gemini id is ignored for openai and
 # vice-versa). Blank -> that provider's default.
 S2S_MODEL = os.getenv("S2S_MODEL", "").strip()
@@ -96,7 +102,7 @@ def _build_realtime_llm() -> LLM:
     One realtime model replaces the STT+LLM+TTS trio. Tools/persona/state are the
     same either way; only the audio brain differs.
     """
-    if S2S_PROVIDER == "openai":
+    if VOICE_MODE == "openai":
         return _build_openai_realtime()
     return _build_gemini_realtime()
 
@@ -303,15 +309,15 @@ async def entrypoint(ctx: JobContext) -> None:
             getattr(metrics, "ttft", 0.0) or 0.0,
         )
 
-    if VOICE_MODE == "s2s":
-        # Speech-to-speech (Gemini Live): one realtime model does audio-in /
+    if IS_S2S:
+        # Speech-to-speech (gemini or openai): one realtime model does audio-in /
         # audio-out, replacing the Sarvam-STT + text-LLM + Sarvam-TTS trio. No
         # separate vad/stt/tts and no turn-detector config - the model runs its
         # own server-side turn detection. Tools, persona and state are unchanged.
         realtime_llm = _build_realtime_llm()
         logger.info(
-            "VOICE MODE: s2s provider=%s model=%s voice=%s",
-            S2S_PROVIDER,
+            "VOICE MODE: %s (speech-to-speech) model=%s voice=%s",
+            VOICE_MODE,
             S2S_MODEL or "<provider default>",
             S2S_VOICE,
         )
@@ -494,7 +500,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # agent never calls update_instructions() before the realtime session is
     # active (which would reconnect and time out the opener). Cascade builds them
     # per turn in on_enter/on_user_turn_completed.
-    s2s_instructions = instructions_for_call(userdata) if VOICE_MODE == "s2s" else None
+    s2s_instructions = instructions_for_call(userdata) if IS_S2S else None
 
     await session.start(
         agent=CanopyAssistant(s2s_instructions),
