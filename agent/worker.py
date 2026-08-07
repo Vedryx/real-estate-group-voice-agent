@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import json
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -39,9 +40,11 @@ from livekit.agents import (
 from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter, LLMError
 from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.agents.voice.events import (
+    AgentStateChangedEvent,
     ConversationItemAddedEvent,
     ErrorEvent,
     UserInputTranscribedEvent,
+    UserStateChangedEvent,
 )
 from livekit.plugins import google, noise_cancellation, sarvam, silero
 
@@ -427,6 +430,31 @@ async def entrypoint(ctx: JobContext) -> None:
                 session.say("Sorry, ek second—main detail dobara check kar raha hoon.")
 
     session.on("error", _on_error)
+
+    # Perceived-latency tracker — the human-felt gap from the caller going quiet
+    # to the agent starting to speak. Works in BOTH modes and is the ONLY latency
+    # signal in s2s (the realtime path emits no ttft/tts_ttfb/e2e cascade metrics).
+    # Measured the same way in both so cascade (~2.9s) and s2s are comparable.
+    _perceived = {"user_quiet_at": None}
+
+    def _on_user_state(ev: UserStateChangedEvent) -> None:
+        # User just stopped speaking -> start the clock (last pause wins).
+        if ev.new_state == "listening":
+            _perceived["user_quiet_at"] = time.monotonic()
+
+    def _on_agent_state(ev: AgentStateChangedEvent) -> None:
+        # Agent audio begins -> log the gap since the caller went quiet.
+        started = _perceived["user_quiet_at"]
+        if ev.new_state == "speaking" and started is not None:
+            logger.info(
+                "Perceived latency (user-quiet -> agent-speaking): %.2fs [mode=%s]",
+                time.monotonic() - started,
+                VOICE_MODE,
+            )
+            _perceived["user_quiet_at"] = None
+
+    session.on("user_state_changed", _on_user_state)
+    session.on("agent_state_changed", _on_agent_state)
 
     await session.start(
         agent=CanopyAssistant(),
