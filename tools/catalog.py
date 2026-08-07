@@ -14,11 +14,12 @@ indicative — never a firm figure.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal
 
 from livekit.agents import Agent, RunContext, function_tool
-from livekit.agents.llm import ToolError
+from livekit.agents.llm import StopResponse, ToolError
 from livekit.agents.voice.speech_handle import SpeechHandle
 
 from agent import data_store as ds
@@ -70,6 +71,40 @@ Outcome = Literal[
     "opted_out",
     "spam_or_abandoned",
 ]
+
+
+async def _log_with_filler(
+    context: RunContext[CallUserdata], ud: CallUserdata, **kwargs: Any
+) -> dict[str, Any] | None:
+    """Persist off the event loop, playing a short filler ONLY if it's genuinely
+    slow (C2). A fast local write finishes well under the delay, so no filler
+    fires; a slow CRM/network write later plays "Ji, ek second..." after ~0.9s
+    so the caller never hears dead silence.
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(_safe_log_lead, ud, **kwargs))
+    done, _ = await asyncio.wait({task}, timeout=0.9)
+    if not done:
+        context.session.say("Ji, ek second...")
+    return await task
+
+
+def _cta_confirmation(kind: str, name: str | None, when: str, lang: str | None) -> str:
+    """Deterministic confirmation line assembled from tool output (C1) — spoken
+    directly via session.say, so no extra LLM generation is needed."""
+    who = f" {name} ji" if name else ""
+    lang = lang or "hi-IN"
+    if kind == "visit":
+        if lang == "en-IN":
+            return f"Done{who}. Your site visit request for {when} is saved; the team will confirm the slot."
+        if lang == "mr-IN":
+            return f"Done{who}. {when} chi site visit request save zali aahe; team slot confirm karel."
+        return f"Done{who}. {when} ki site visit request save ho gayi hai; team slot confirm karegi."
+    # callback
+    if lang == "en-IN":
+        return f"Done{who}. Your callback request for {when} is saved; the team will call you back."
+    if lang == "mr-IN":
+        return f"Theek aahe{who}. {when} cha callback request save zala aahe; team tumhala call karel."
+    return f"Theek hai{who}. {when} ka callback request save ho gaya hai; team aapko call karegi."
 
 
 def _safe_log_lead(ud: CallUserdata, **kwargs: Any) -> dict[str, Any] | None:
@@ -443,19 +478,18 @@ async def schedule_site_visit(
     kwargs = _current_lead_kwargs(ud, notes=f"Site visit requested, preferred: {preferred_date}")
     kwargs["name"] = resolved_name
     kwargs["caller_phone"] = resolved_phone
-    record = _safe_log_lead(ud, outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs)
+    record = await _log_with_filler(
+        context, ud, outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs
+    )
     if record is None:
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
-    return {
-        "logged": True,
-        "lead_id": record.get("lead_id"),
-        "status": "requested_pending_team_confirmation",
-        "message": (
-            "The request is saved but not yet confirmed. Tell the caller the team will call to "
-            "confirm the final slot; never say it is booked."
-        ),
-    }
+    # C1: speak a deterministic confirmation directly (no extra LLM turn), then
+    # stop the model from generating a second reply.
+    context.session.say(
+        _cta_confirmation("visit", resolved_name, preferred_date, ud.preferred_language)
+    )
+    raise StopResponse()
 
 
 @function_tool
@@ -487,11 +521,17 @@ async def log_callback(
     kwargs = _current_lead_kwargs(ud, notes=note)
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
-    record = _safe_log_lead(ud, outcome="callback_requested", consent_to_be_contacted=True, **kwargs)
+    record = await _log_with_filler(
+        context, ud, outcome="callback_requested", consent_to_be_contacted=True, **kwargs
+    )
     if record is None:
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
-    return {"logged": True, "lead_id": record.get("lead_id")}
+    # C1: deterministic confirmation, no extra LLM turn.
+    context.session.say(
+        _cta_confirmation("callback", name or ud.caller_name, preferred_time, ud.preferred_language)
+    )
+    raise StopResponse()
 
 
 @function_tool

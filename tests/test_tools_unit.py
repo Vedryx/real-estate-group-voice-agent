@@ -16,6 +16,8 @@ from types import SimpleNamespace
 import pytest
 from livekit.agents.llm import ToolError
 
+from livekit.agents.llm import StopResponse
+
 from agent.canopy import CanopyKnowledge
 from agent.state import CallUserdata
 from tools import catalog
@@ -28,7 +30,9 @@ def ud() -> CallUserdata:
 
 @pytest.fixture
 def ctx(ud):
-    return SimpleNamespace(userdata=ud)
+    # session.say is used for deterministic confirmations (C1) and the slow-op
+    # filler (C2); a no-op stub is enough for these logic tests.
+    return SimpleNamespace(userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None))
 
 
 # ------------------------------------------------------------- Layer 1 facts
@@ -129,18 +133,16 @@ async def test_schedule_site_visit_requires_name_and_phone(ud):
 
 
 async def test_schedule_site_visit_logs_request(ctx):
-    result = await catalog.schedule_site_visit(
-        ctx, preferred_date="this Saturday", name="Asha"
-    )
-    assert result["logged"] is True
-    assert result["status"] == "requested_pending_team_confirmation"
+    # success speaks a deterministic confirmation and raises StopResponse (C1)
+    with pytest.raises(StopResponse):
+        await catalog.schedule_site_visit(ctx, preferred_date="this Saturday", name="Asha")
     assert ctx.userdata.next_step == "site_visit_requested"
     assert ctx.userdata.lead_logged is True
 
 
 async def test_log_callback_logs_and_sets_next_step(ctx):
-    result = await catalog.log_callback(ctx, preferred_time="kal shaam", name="Ravi")
-    assert result["logged"] is True
+    with pytest.raises(StopResponse):
+        await catalog.log_callback(ctx, preferred_time="kal shaam", name="Ravi")
     assert ctx.userdata.next_step == "callback_requested"
 
 
@@ -171,7 +173,8 @@ async def test_cta_ready_needs_two_buying_signals():
 
 
 async def test_schedule_site_visit_records_cta_offer(ctx):
-    await catalog.schedule_site_visit(ctx, preferred_date="Saturday", name="Asha")
+    with pytest.raises(StopResponse):
+        await catalog.schedule_site_visit(ctx, preferred_date="Saturday", name="Asha")
     assert ctx.userdata.site_visit_offered is True
     assert ctx.userdata.cta_offer_count == 1
 
@@ -245,10 +248,11 @@ async def test_callback_logged_only_once(ctx, monkeypatch):
         return real(**kw)
 
     monkeypatch.setattr(catalog.ds, "log_lead", counting)
-    r1 = await catalog.log_callback(ctx, preferred_time="aaj 4 baje")
+    with pytest.raises(StopResponse):
+        await catalog.log_callback(ctx, preferred_time="aaj 4 baje")
     # model redundantly logs the same outcome again at close
     r2 = await catalog.log_lead(ctx, outcome="callback_requested")
-    assert r1["logged"] is True and r2["logged"] is True
+    assert r2["logged"] is True
     assert outcomes.count("callback_requested") == 1  # written once, not twice
 
 
@@ -258,11 +262,21 @@ async def test_end_call_does_not_duplicate_logged_outcome(ctx, monkeypatch):
     monkeypatch.setattr(
         catalog.ds, "log_lead", lambda **kw: (outcomes.append(kw["outcome"]), real(**kw))[1]
     )
+    with pytest.raises(StopResponse):
+        await catalog.log_callback(ctx, preferred_time="4pm")
     ctx.speech_handle = SimpleNamespace(add_done_callback=lambda cb: None)
     ctx.session = SimpleNamespace(shutdown=lambda **kw: None)
-    await catalog.log_callback(ctx, preferred_time="4pm")
     await catalog.end_call(ctx)
     assert outcomes.count("callback_requested") == 1
+
+
+def test_cta_confirmation_is_deterministic_and_localized():
+    hi = catalog._cta_confirmation("visit", "Asha", "kal 4 baje", "hi-IN")
+    assert "Asha ji" in hi and "kal 4 baje" in hi and "save" in hi.lower()
+    en = catalog._cta_confirmation("callback", None, "evening", "en-IN")
+    assert "evening" in en and "team will call" in en.lower()
+    mr = catalog._cta_confirmation("visit", "Raj", "udya", "mr-IN")
+    assert "Raj ji" in mr and "udya" in mr
 
 
 async def test_no_multi_project_tools_remain():
