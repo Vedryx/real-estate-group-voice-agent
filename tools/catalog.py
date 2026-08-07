@@ -77,19 +77,35 @@ Outcome = Literal[
 ]
 
 
+def _write_ack_line(lang: str | None) -> str:
+    """Spoken 'let me note that down' ack, said just before a write so the caller
+    never hears dead air during the save. Number-free so the TTS can't mangle it."""
+    if lang == "en-IN":
+        return "One second, let me note that down..."
+    if lang == "mr-IN":
+        return "Ek second, mi note karto..."
+    return "Ek second, main note kar leta hoon..."
+
+
+def _speak_write_ack(context: RunContext[CallUserdata], ud: CallUserdata) -> None:
+    """Say the write-ack ONCE per call (founder: never repeat the phrase in one
+    call). Fires right before an actual persistence write, after validation has
+    passed — so a failed/premature tool call never triggers it."""
+    if ud.write_ack_spoken:
+        return
+    ud.write_ack_spoken = True
+    context.session.say(_write_ack_line(ud.preferred_language))
+
+
 async def _log_with_filler(
     context: RunContext[CallUserdata], ud: CallUserdata, **kwargs: Any
 ) -> dict[str, Any] | None:
-    """Persist off the event loop, playing a short filler ONLY if it's genuinely
-    slow (C2). A fast local write finishes well under the delay, so no filler
-    fires; a slow CRM/network write later plays "Ji, ek second..." after ~0.9s
-    so the caller never hears dead silence.
+    """Persist off the event loop. Speaks a short "note kar leta hoon" ack first
+    (once per call) so the caller hears the write happening, then runs the write
+    off-thread; the deterministic confirmation follows once it completes.
     """
-    task = asyncio.ensure_future(asyncio.to_thread(_safe_log_lead, ud, **kwargs))
-    done, _ = await asyncio.wait({task}, timeout=0.9)
-    if not done:
-        context.session.say("Ji, ek second...")
-    return await task
+    _speak_write_ack(context, ud)
+    return await asyncio.to_thread(_safe_log_lead, ud, **kwargs)
 
 
 def _cta_confirmation(kind: str, name: str | None, when: str, lang: str | None) -> str:

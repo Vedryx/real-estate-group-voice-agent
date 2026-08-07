@@ -205,6 +205,9 @@ class CallUserdata:
     cta_offer_count: int = 0
 
     lead_logged: bool = False
+    # Spoken "let me note that down" ack before a write — played at most ONCE per
+    # call (founder: never repeat the filler phrase in one call).
+    write_ack_spoken: bool = False
     # Outcomes already written this call — prevents logging the same callback /
     # site-visit twice (the model once called log_callback and then log_lead
     # with the same outcome at close).
