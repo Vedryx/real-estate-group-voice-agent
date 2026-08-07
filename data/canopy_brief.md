@@ -14,7 +14,6 @@ approximate estimates, not exact. Say these casually, one at a time.
 - **Where:** Forest Trails, Paud Road, Bhugaon, opposite Manas Lake, Pune 412115.
 - **Homes:** only **2 & 3 BHK**, nature-facing, valley/township views.
 - **RERA:** MahaRERA P52100079518.
-- **Goal:** get them to a **site visit**, else a **callback**.
 
 ## Ready answers (say without a tool call)
 - **Starting price? (DUMMY, indicative)** 2 BHK around 95 lakh onwards, 3 BHK around 1 crore 35 lakh onwards — depends on floor, view and unit; team confirms exact.

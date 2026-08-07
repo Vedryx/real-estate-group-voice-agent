@@ -163,7 +163,6 @@ async def get_configurations(context: RunContext[CallUserdata]) -> dict[str, Any
     return {
         "configs": k.configs(),
         "summary": {c: k.config_summary(c) for c in k.configs()},
-        "note": "Speak the carpet band naturally; drill into a specific layout only if asked.",
     }
 
 
@@ -207,11 +206,6 @@ async def get_unit_details(
             }
             for u in units
         ],
-        "note": (
-            "Summarise warmly (e.g. 'we have a few 3 BHK layouts') and suggest seeing them in "
-            "person — do NOT list every layout or its numbers unless the caller specifically "
-            "asks for the sizes/options."
-        ),
     }
 
 
@@ -292,12 +286,6 @@ async def get_pricing(
         "indicative_only": True,
         "price_basis": k.price_basis(),
         "disclaimer": k.commercial_disclaimer(),
-        "instruction": (
-            "State this as indicative / starting-from and say the team confirms the exact figure "
-            "for the specific floor, view and unit. If asked whether it's all-inclusive, use "
-            "price_basis honestly (base price; stamp duty/GST/registration/floor-rise extra). "
-            "Never present it as a final price."
-        ),
     }
 
 
@@ -308,7 +296,6 @@ async def get_possession(context: RunContext[CallUserdata]) -> dict[str, Any]:
     return {
         "possession": k.possession(),
         "indicative_only": True,
-        "instruction": "Give it as a target timeline the team will confirm — not a promise.",
     }
 
 
@@ -318,19 +305,13 @@ async def commercial_detail_unavailable(
 ) -> dict[str, Any]:
     """Use for a money/logistics detail you have NO source for (floor-rise, GST, stamp duty, maintenance, parking charges/allocation, exact availability, launch offers, exact distances).
 
-    Do not guess these. Return an honest "the team will share exact figures" and offer a callback.
+    Do not guess these — this returns that the figure is unavailable. How to respond
+    (be honest, capture a callback per the offer gate) is decided by the persona, not here.
 
     Args:
         topic: Short slug of what was asked, e.g. "stamp_duty" or "maintenance".
     """
-    return {
-        "available": False,
-        "topic": topic,
-        "message": (
-            "Be honest that you don't have that exact figure on this call, and offer to have the "
-            "team share it — a callback or during a site visit. Do not invent a number."
-        ),
-    }
+    return {"available": False, "topic": topic}
 
 
 # --------------------------------------------------------------------- lead capture
