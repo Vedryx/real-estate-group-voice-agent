@@ -94,12 +94,13 @@ def test_pricing_present_for_both_configs() -> None:
         assert "indicative_base_price" in row
 
 
-def test_nearby_places_present_and_flagged_approximate() -> None:
-    nearby = K.nearby()
-    assert len(nearby.get("places", [])) >= 5
-    assert "approximate" in nearby["note"].lower()
-    # Bavdhan should be the closest anchor from the brochure claim.
-    names = [p["place"] for p in nearby["places"]]
+def test_connectivity_is_a_separate_estimated_layer() -> None:
+    conn = K.estimated_connectivity()
+    assert len(conn.get("places", [])) >= 5
+    assert conn["approximate"] is True
+    assert conn.get("source") and conn.get("calculation_date")
+    assert "traffic" in conn["traffic_disclaimer"].lower()
+    names = [p["place"] for p in conn["places"]]
     assert any("Bavdhan" in n for n in names)
 
 

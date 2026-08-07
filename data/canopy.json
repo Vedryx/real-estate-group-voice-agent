@@ -16,8 +16,11 @@
     "phrasing": "about 10 minutes from Bavdhan",
     "note": "Brochure claim; always phrase as approximate. No exact distances to schools/hospitals/workplaces are confirmed."
   },
-  "nearby": {
-    "note": "APPROXIMATE directional estimates from general Pune geography, NOT the brochure or a maps API. The agent must say 'roughly' / 'about' and never a precise figure. Swap for verified drive-time data when available.",
+  "estimated_connectivity": {
+    "source": "general Pune geography estimate — NOT the brochure, NOT a maps API",
+    "calculation_date": "2026-08-07",
+    "approximate": true,
+    "traffic_disclaimer": "Approximate off-peak directional estimates; real drive time varies with traffic. The agent must say 'roughly' / 'about', never a precise figure. Replace with a live maps/drive-time source when available.",
     "places": [
       { "place": "Bavdhan", "approx_km": 6, "approx_drive": "about 10 minutes" },
       { "place": "Chandni Chowk (Pune)", "approx_km": 8, "approx_drive": "about 15 minutes" },

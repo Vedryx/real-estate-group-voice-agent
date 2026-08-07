@@ -57,7 +57,7 @@ def render_working_brief(facts: dict[str, Any], commercial: dict[str, Any]) -> s
     """
     cfg = facts.get("config_summary", {})
     poss = commercial.get("possession", {})
-    nearby = facts.get("nearby", {}).get("places", [])
+    nearby = facts.get("estimated_connectivity", {}).get("places", [])
     near = ", ".join(f'{p["place"]} {p["approx_drive"]}' for p in nearby[:6])
     lines = [
         "# The Canopy — quick facts (answer these directly, no tool needed)",
@@ -171,9 +171,10 @@ class CanopyKnowledge:
             "township_size_acres": self.facts["township_size_acres"],
         }
 
-    def nearby(self) -> dict[str, Any]:
-        """Approximate distances to nearby Pune landmarks (directional estimates)."""
-        return dict(self.facts.get("nearby", {}))
+    def estimated_connectivity(self) -> dict[str, Any]:
+        """Approximate distances to nearby Pune landmarks — NOT verified facts
+        (kept out of the RERA/carpet layer). Always spoken as 'roughly'."""
+        return dict(self.facts.get("estimated_connectivity", {}))
 
     def contact(self) -> dict[str, str]:
         return dict(self.facts["contact"])

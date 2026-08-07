@@ -241,8 +241,10 @@ async def get_detailed_project_info(
             "township_size_acres": loc["township_size_acres"],
             "commute": loc["commute"]["phrasing"],
             "positioning": k.building()["positioning"],
-            "nearby": k.nearby().get("places", []),
-            "note": "Distances are APPROXIMATE directional estimates — say 'roughly', never exact.",
+            "nearby": k.estimated_connectivity().get("places", []),
+            "note": k.estimated_connectivity().get(
+                "traffic_disclaimer", "Distances are APPROXIMATE — say 'roughly', never exact."
+            ),
         }
 
     if topic == "specifications":

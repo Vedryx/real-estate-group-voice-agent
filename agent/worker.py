@@ -164,10 +164,27 @@ def _metric_seconds(metrics: dict, key: str) -> float | None:
     return round(value, 3) if isinstance(value, (int, float)) else None
 
 
+def _guard_commercial_data(knowledge: CanopyKnowledge) -> None:
+    """E3: never let DUMMY commercial data reach a real caller.
+
+    Hard-block startup in production; otherwise log a loud demo-mode banner.
+    """
+    if not knowledge.commercial_is_dummy():
+        return
+    env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development")).strip().lower()
+    if env in ("production", "prod"):
+        raise RuntimeError(
+            "Production startup blocked: dummy Canopy commercial data is active. "
+            "Replace data/canopy_commercial.json with the real cost sheet before going live."
+        )
+    logger.warning("DEMO MODE — DUMMY COMMERCIAL DATA (price/possession are placeholders)")
+
+
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
     knowledge = CanopyKnowledge.load()
+    _guard_commercial_data(knowledge)
     lead_context = _extract_outbound_lead_context(
         ctx.job.metadata, getattr(ctx.job, "attributes", None)
     )

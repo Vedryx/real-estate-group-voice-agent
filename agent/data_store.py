@@ -17,6 +17,33 @@ from typing import Any
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 LEADS_LOG_PATH = DATA_DIR / "leads.jsonl"
 
+_JSON_SCALARS = (str, int, float, bool, type(None))
+
+
+def _assert_json_safe(value: Any, path: str = "record") -> None:
+    """Reject a malformed lead value instead of silently stringifying it (E5).
+
+    Replaces the old json.dumps(default=str), which would persist garbage like
+    "<MagicMock ...>". A non-JSON value raises here; the tool's _safe_log_lead
+    catches it and reports logged=False rather than confirming a bad save.
+    """
+    if isinstance(value, bool) or isinstance(value, _JSON_SCALARS):
+        return
+    if isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            _assert_json_safe(v, f"{path}[{i}]")
+        return
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if not isinstance(k, str):
+                raise TypeError(f"{path}: non-string key {k!r}")
+            _assert_json_safe(v, f"{path}.{k}")
+        return
+    raise TypeError(
+        f"{path}: value of type {type(value).__name__} is not JSON-serializable ({value!r})"
+    )
+
+
 VALID_OUTCOMES = {
     "qualified_lead",
     "callback_requested",
@@ -106,13 +133,13 @@ def log_lead(
         "consent_to_be_contacted": consent_to_be_contacted,
     }
 
+    # E5: validate before writing — reject malformed values (e.g. a mock that
+    # leaked in) instead of stringifying them. Raises TypeError, which the tool's
+    # _safe_log_lead catches and turns into logged=False (no bad "saved" claim).
+    _assert_json_safe(record)
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    # default=str is a safety net: a stray non-serializable value (e.g. a value
-    # that slipped in as a mock/object in some runtime) is coerced to its string
-    # form instead of raising and silently dropping the lead. All real fields
-    # are already JSON-serializable. Any genuine write failure (IO) still raises
-    # and is handled by the tool wrappers, which then refuse to confirm success.
     with log_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     return record
