@@ -97,7 +97,11 @@ def _extract_caller_phone(participant: rtc.RemoteParticipant | None) -> str | No
     # before relying on it in production (plan.md's own "verify against
     # repo" caution applies here too, since this is server-side, not
     # SDK-side, surface).
-    return participant.attributes.get("sip.phoneNumber")
+    phone = participant.attributes.get("sip.phoneNumber")
+    # Guard: in console/dev mode participant.attributes is a mock and .get()
+    # returns a MagicMock, which then leaked into the lead record as an ugly
+    # "<MagicMock ...>" string. Only accept a real non-empty string.
+    return phone if isinstance(phone, str) and phone.strip() else None
 
 
 def _extract_outbound_lead_context(

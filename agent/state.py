@@ -159,6 +159,10 @@ class CallUserdata:
     next_step: str = "none"
     closing_attempted: bool = False
     lead_logged: bool = False
+    # Outcomes already written this call — prevents logging the same callback /
+    # site-visit twice (the model once called log_callback and then log_lead
+    # with the same outcome at close).
+    logged_outcomes: set[str] = field(default_factory=set)
 
     @property
     def conversation_stage(self) -> str:

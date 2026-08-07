@@ -211,6 +211,36 @@ async def test_callback_persist_failure_returns_logged_false(ctx, monkeypatch):
     assert ctx.userdata.lead_logged is False
 
 
+async def test_callback_logged_only_once(ctx, monkeypatch):
+    """A callback must not be written twice (log_callback then log_lead at close)."""
+    outcomes = []
+    real = catalog.ds.log_lead
+
+    def counting(**kw):
+        outcomes.append(kw["outcome"])
+        return real(**kw)
+
+    monkeypatch.setattr(catalog.ds, "log_lead", counting)
+    r1 = await catalog.log_callback(ctx, preferred_time="aaj 4 baje")
+    # model redundantly logs the same outcome again at close
+    r2 = await catalog.log_lead(ctx, outcome="callback_requested")
+    assert r1["logged"] is True and r2["logged"] is True
+    assert outcomes.count("callback_requested") == 1  # written once, not twice
+
+
+async def test_end_call_does_not_duplicate_logged_outcome(ctx, monkeypatch):
+    outcomes = []
+    real = catalog.ds.log_lead
+    monkeypatch.setattr(
+        catalog.ds, "log_lead", lambda **kw: (outcomes.append(kw["outcome"]), real(**kw))[1]
+    )
+    ctx.speech_handle = SimpleNamespace(add_done_callback=lambda cb: None)
+    ctx.session = SimpleNamespace(shutdown=lambda **kw: None)
+    await catalog.log_callback(ctx, preferred_time="4pm")
+    await catalog.end_call(ctx)
+    assert outcomes.count("callback_requested") == 1
+
+
 async def test_no_multi_project_tools_remain():
     """The multi-project tools must be gone from the catalog surface."""
     names = {t.info.name for t in catalog.ALL_TOOLS}

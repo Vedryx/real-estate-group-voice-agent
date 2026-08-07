@@ -128,8 +128,8 @@ async def test_respects_do_not_contact_immediately(call):
     await result.expect.contains_message(role="assistant").judge(
         judge_llm(),
         intent=(
-            "acknowledges the do-not-contact request, apologises briefly, and does "
-            "NOT pitch the project or ask another qualifying question"
+            "acknowledges the do-not-contact request and stops — it does NOT pitch "
+            "the project, offer a visit/callback, or ask another qualifying question"
         ),
     )
 

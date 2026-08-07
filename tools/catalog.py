@@ -72,17 +72,25 @@ Outcome = Literal[
 ]
 
 
-def _safe_log_lead(**kwargs: Any) -> dict[str, Any] | None:
-    """Persist a lead, converting any failure into a signal instead of a crash.
+def _safe_log_lead(ud: CallUserdata, **kwargs: Any) -> dict[str, Any] | None:
+    """Persist a lead once, converting failure into a signal instead of a crash.
 
-    Returns the record on success, or None on failure (logged for ops). The
-    caller decides what to tell the customer — never confirm on None.
+    Deduplicates by outcome per call: the same outcome (e.g. callback_requested)
+    is never written twice, even if the model calls log_callback and then
+    log_lead for it. Returns the record on success, a {"_duplicate": True}
+    marker if it was already logged, or None on write failure (never confirm
+    success on None).
     """
+    outcome = kwargs.get("outcome")
+    if outcome in ud.logged_outcomes:
+        return {"_duplicate": True, "lead_id": None}
     try:
-        return ds.log_lead(**kwargs)
+        record = ds.log_lead(**kwargs)
     except Exception:  # noqa: BLE001 - never let a write error break the call
-        logger.exception("log_lead failed for outcome=%s", kwargs.get("outcome"))
+        logger.exception("log_lead failed for outcome=%s", outcome)
         return None
+    ud.logged_outcomes.add(outcome)
+    return record
 
 # Money topics with no source in any layer — never guess these.
 UNAVAILABLE_COMMERCIAL_TOPICS = {
@@ -432,13 +440,13 @@ async def schedule_site_visit(
     kwargs = _current_lead_kwargs(ud, notes=f"Site visit requested, preferred: {preferred_date}")
     kwargs["name"] = resolved_name
     kwargs["caller_phone"] = resolved_phone
-    record = _safe_log_lead(outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs)
+    record = _safe_log_lead(ud, outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs)
     if record is None:
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
     return {
         "logged": True,
-        "lead_id": record["lead_id"],
+        "lead_id": record.get("lead_id"),
         "status": "requested_pending_team_confirmation",
         "message": (
             "The request is saved but not yet confirmed. Tell the caller the team will call to "
@@ -474,11 +482,11 @@ async def log_callback(
     kwargs = _current_lead_kwargs(ud, notes=note)
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
-    record = _safe_log_lead(outcome="callback_requested", consent_to_be_contacted=True, **kwargs)
+    record = _safe_log_lead(ud, outcome="callback_requested", consent_to_be_contacted=True, **kwargs)
     if record is None:
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
-    return {"logged": True, "lead_id": record["lead_id"]}
+    return {"logged": True, "lead_id": record.get("lead_id")}
 
 
 @function_tool
@@ -509,12 +517,12 @@ async def log_lead(
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
     record = _safe_log_lead(
-        outcome=outcome, consent_to_be_contacted=consent_to_be_contacted, **kwargs
+        ud, outcome=outcome, consent_to_be_contacted=consent_to_be_contacted, **kwargs
     )
     if record is None:
         return {"logged": False, "instruction": _PERSIST_FAILED}
     ud.lead_logged = True
-    return {"logged": True, "lead_id": record["lead_id"], "qualification": ud.qualification_snapshot()}
+    return {"logged": True, "lead_id": record.get("lead_id"), "qualification": ud.qualification_snapshot()}
 
 
 @function_tool
@@ -526,6 +534,7 @@ async def escalate_to_human(context: RunContext[CallUserdata], reason: str) -> A
     """
     ud = context.userdata
     _safe_log_lead(
+        ud,
         outcome="escalation_needed",
         consent_to_be_contacted=True,
         **_current_lead_kwargs(ud, notes=reason),
@@ -544,6 +553,7 @@ async def end_call(context: RunContext[CallUserdata]) -> str:
     _apply_outcome_to_state(ud, outcome)
     if not ud.lead_logged:
         _safe_log_lead(
+            ud,
             outcome=outcome,
             consent_to_be_contacted=outcome != "opted_out",
             **_current_lead_kwargs(ud, notes="auto-logged at end_call"),
