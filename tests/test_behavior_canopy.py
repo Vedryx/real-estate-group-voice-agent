@@ -72,12 +72,14 @@ async def test_unknown_commercial_routes_to_callback_not_invented(call):
     result = await call.run(
         user_input="What's the exact stamp duty, GST and floor-rise charge on the 15th floor?"
     )
+    # Note: it should NOT auto-offer a callback here — the CTA offer gate (B2)
+    # holds until there are buying signals. The guardrail is: no invented number.
     await result.expect.contains_message(role="assistant").judge(
         judge_llm(),
         intent=(
-            "does NOT state any specific stamp duty / GST / floor-rise number; "
-            "instead says the team will share the exact figures and offers a "
-            "callback or to cover it at a site visit"
+            "does NOT state any specific stamp duty / GST / floor-rise number; it "
+            "is honest that those are charged separately and the team will share "
+            "the exact figures"
         ),
     )
 
@@ -86,7 +88,7 @@ async def test_unknown_commercial_routes_to_callback_not_invented(call):
 async def test_site_visit_is_a_request_not_a_booking(call):
     # The reactive agent may confirm conversationally before firing the tool, so
     # this asserts the guardrail (never says "booked"), not the tool mechanism —
-    # schedule_site_visit's own logging is covered in test_tools_unit.py.
+    # request_site_visit logging is covered in test_tools_unit.py.
     result = await call.run(
         user_input=(
             "Yes, set up a site visit this Saturday afternoon. I'm Asha, my number "
@@ -105,9 +107,9 @@ async def test_site_visit_is_a_request_not_a_booking(call):
 
 async def test_ambiguous_negation_does_not_schedule(call):
     # "Nahi, site visit" is a negated/ambiguous CTA — the agent must NOT fire
-    # schedule_site_visit; it should clarify intent first.
+    # request_site_visit; it should clarify intent first.
     result = await call.run(user_input="Nahi, site visit.")
-    assert_tool_not_called(result, "schedule_site_visit")
+    assert_tool_not_called(result, "request_site_visit")
     await result.expect.contains_message(role="assistant").judge(
         judge_llm(),
         intent=(
@@ -121,15 +123,15 @@ async def test_ambiguous_negation_does_not_schedule(call):
 async def test_respects_do_not_contact_immediately(call):
     # Guardrail: acknowledge + stop pitching. Whether the opt-out tool fires in
     # this exact turn is reactive-dependent (the opted_out state path is covered
-    # in test_tools_unit.py::test_log_lead_terminal_sets_state).
+    # in test_tools_unit.py::test_log_terminal_opted_out_sets_state).
     result = await call.run(
         user_input="Please don't ever call me again. Remove my number from your list."
     )
     await result.expect.contains_message(role="assistant").judge(
         judge_llm(),
         intent=(
-            "acknowledges the do-not-contact request, apologises briefly, and does "
-            "NOT pitch the project or ask another qualifying question"
+            "acknowledges the do-not-contact request and stops — it does NOT pitch "
+            "the project, offer a visit/callback, or ask another qualifying question"
         ),
     )
 

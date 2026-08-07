@@ -31,13 +31,54 @@ from typing import Any
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 FACTS_PATH = DATA_DIR / "canopy.json"
 COMMERCIAL_PATH = DATA_DIR / "canopy_commercial.json"
-BRIEF_PATH = DATA_DIR / "canopy_brief.md"
 
 
 def _normalize_config(config: str) -> str:
     """Fold '2 BHK' / '2bhk' / '2 bhk' / '2' to a canonical '2 BHK'."""
     digits = "".join(ch for ch in config if ch.isdigit())
     return f"{digits} BHK" if digits else config.strip().upper()
+
+
+def _indicative_price(commercial: dict[str, Any], config: str) -> str | None:
+    for p in commercial.get("pricing", []):
+        if p.get("config") == config:
+            # indicative_base_price is the post-E1 name; fall back to the old key.
+            return p.get("indicative_base_price") or p.get("indicative_all_in")
+    return None
+
+
+def render_working_brief(facts: dict[str, Any], commercial: dict[str, Any]) -> str:
+    """Generate the Layer-0 working brief from the canonical JSON (D3).
+
+    One source of truth: project facts from canopy.json, commercial from
+    canopy_commercial.json. No hand-maintained third copy to drift. Kept to a
+    compact set of speakable facts (~350 tokens) — guardrails live in the
+    persona, not here.
+    """
+    cfg = facts.get("config_summary", {})
+    poss = commercial.get("possession", {})
+    nearby = facts.get("estimated_connectivity", {}).get("places", [])
+    near = ", ".join(f'{p["place"]} {p["approx_drive"]}' for p in nearby[:6])
+    lines = [
+        "# The Canopy — quick facts (answer these directly, no tool needed)",
+        f'- {facts["project"]} by {facts["developer"]}: a {facts["building"]["storeys"]}-storey '
+        f'hilltop tower in the {facts["township_size_acres"]} acre {facts["township"]} township.',
+        f'- Location: {facts["address"]} (~{facts["commute"]["bavdhan_minutes"]} min from Bavdhan).',
+        f'- Homes: {cfg.get("2 BHK", {}).get("phrasing", "2 BHK ~886 sq ft carpet")}; '
+        f'{cfg.get("3 BHK", {}).get("phrasing", "3 BHK ~1230-1276 sq ft carpet")}.',
+        f'- Price (INDICATIVE base — team confirms exact; stamp duty / GST / registration / '
+        f'floor-rise / view premium are separate): 2 BHK {_indicative_price(commercial, "2 BHK")}, '
+        f'3 BHK {_indicative_price(commercial, "3 BHK")}.',
+        f'- Possession: {poss.get("status", "under construction")}, '
+        f'{poss.get("phrasing", "targeted ~end 2027")}.',
+        f'- Booking {commercial.get("booking_amount", "~2 lakh")}; '
+        f'{commercial.get("payment_plan", "construction-linked plan; team shares schedule")}.',
+        f'- RERA: MahaRERA {facts["rera_number"]}.',
+        "- Amenities: rooftop pool + gym (21st floor), business lounge; township has tennis, "
+        "cricket ground, equestrian centre, schools, shopping, healthcare (some paid / under construction).",
+        f'- Nearby (approximate — say "roughly", never exact): {near}.',
+    ]
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -54,12 +95,13 @@ class CanopyKnowledge:
         commercial = json.loads(
             (data_dir / "canopy_commercial.json").read_text(encoding="utf-8")
         )
-        brief = (data_dir / "canopy_brief.md").read_text(encoding="utf-8")
+        # D3: the brief is GENERATED from the canonical JSON, not a hand-kept file.
+        brief = render_working_brief(facts, commercial)
         return cls(facts=facts, commercial=commercial, brief=brief)
 
     # ------------------------------------------------------------------ Layer 0
     def working_brief(self) -> str:
-        """The pre-call working memory (high-level facts + FAQ pack)."""
+        """The pre-call working memory — generated from canonical JSON (D3)."""
         return self.brief
 
     # ------------------------------------------------------------------ Layer 1
@@ -129,6 +171,11 @@ class CanopyKnowledge:
             "township_size_acres": self.facts["township_size_acres"],
         }
 
+    def estimated_connectivity(self) -> dict[str, Any]:
+        """Approximate distances to nearby Pune landmarks — NOT verified facts
+        (kept out of the RERA/carpet layer). Always spoken as 'roughly'."""
+        return dict(self.facts.get("estimated_connectivity", {}))
+
     def contact(self) -> dict[str, str]:
         return dict(self.facts["contact"])
 
@@ -166,6 +213,10 @@ class CanopyKnowledge:
 
     def payment_plan(self) -> str | None:
         return self.commercial.get("payment_plan")
+
+    def price_basis(self) -> str | None:
+        """Whether the indicative price is all-inclusive (it is not — extras listed)."""
+        return self.commercial.get("price_basis")
 
     def commercial_disclaimer(self) -> str:
         return self.commercial.get("disclaimer", "")

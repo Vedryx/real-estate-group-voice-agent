@@ -36,10 +36,11 @@ from livekit.agents import (
     cli,
     inference,
 )
-from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter
+from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter, LLMError
 from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.agents.voice.events import (
     ConversationItemAddedEvent,
+    ErrorEvent,
     UserInputTranscribedEvent,
 )
 from livekit.plugins import noise_cancellation, sarvam, silero
@@ -97,7 +98,11 @@ def _extract_caller_phone(participant: rtc.RemoteParticipant | None) -> str | No
     # before relying on it in production (plan.md's own "verify against
     # repo" caution applies here too, since this is server-side, not
     # SDK-side, surface).
-    return participant.attributes.get("sip.phoneNumber")
+    phone = participant.attributes.get("sip.phoneNumber")
+    # Guard: in console/dev mode participant.attributes is a mock and .get()
+    # returns a MagicMock, which then leaked into the lead record as an ugly
+    # "<MagicMock ...>" string. Only accept a real non-empty string.
+    return phone if isinstance(phone, str) and phone.strip() else None
 
 
 def _extract_outbound_lead_context(
@@ -159,10 +164,27 @@ def _metric_seconds(metrics: dict, key: str) -> float | None:
     return round(value, 3) if isinstance(value, (int, float)) else None
 
 
+def _guard_commercial_data(knowledge: CanopyKnowledge) -> None:
+    """E3: never let DUMMY commercial data reach a real caller.
+
+    Hard-block startup in production; otherwise log a loud demo-mode banner.
+    """
+    if not knowledge.commercial_is_dummy():
+        return
+    env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development")).strip().lower()
+    if env in ("production", "prod"):
+        raise RuntimeError(
+            "Production startup blocked: dummy Canopy commercial data is active. "
+            "Replace data/canopy_commercial.json with the real cost sheet before going live."
+        )
+    logger.warning("DEMO MODE — DUMMY COMMERCIAL DATA (price/possession are placeholders)")
+
+
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
     knowledge = CanopyKnowledge.load()
+    _guard_commercial_data(knowledge)
     lead_context = _extract_outbound_lead_context(
         ctx.job.metadata, getattr(ctx.job, "attributes", None)
     )
@@ -334,6 +356,19 @@ async def entrypoint(ctx: JobContext) -> None:
             )
 
     session.on("conversation_item_added", _on_conversation_item_added)
+
+    def _on_error(ev: ErrorEvent) -> None:
+        # C3: no dead air on a genuine (non-recoverable) LLM failure. The
+        # framework retries recoverable errors and fails over if a fallback
+        # model is configured; this canned line covers the case where the turn
+        # would otherwise end in silence. (STT/TTS failures can't be masked by
+        # speaking, so we only recover LLM failures.)
+        err = ev.error
+        if isinstance(err, LLMError) and not err.recoverable:
+            logger.warning("Unrecoverable LLM error; playing recovery line: %s", err.label)
+            session.say("Sorry, ek second—main detail dobara check kar raha hoon.")
+
+    session.on("error", _on_error)
 
     await session.start(
         agent=CanopyAssistant(),

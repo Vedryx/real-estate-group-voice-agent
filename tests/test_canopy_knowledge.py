@@ -91,7 +91,24 @@ def test_pricing_present_for_both_configs() -> None:
     assert len(K.pricing("3 BHK")) == 1
     assert K.pricing() == K.pricing(None)
     for row in K.pricing():
-        assert "indicative_all_in" in row
+        assert "indicative_base_price" in row
+
+
+def test_connectivity_is_a_separate_estimated_layer() -> None:
+    conn = K.estimated_connectivity()
+    assert len(conn.get("places", [])) >= 5
+    assert conn["approximate"] is True
+    assert conn.get("source") and conn.get("calculation_date")
+    assert "traffic" in conn["traffic_disclaimer"].lower()
+    names = [p["place"] for p in conn["places"]]
+    assert any("Bavdhan" in n for n in names)
+
+
+def test_price_basis_says_not_all_inclusive() -> None:
+    basis = K.price_basis()
+    assert basis
+    low = basis.lower()
+    assert "stamp duty" in low and "not" in low  # base price, extras separate
 
 
 def test_possession_present() -> None:
