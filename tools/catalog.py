@@ -207,7 +207,8 @@ async def get_location(context: RunContext[CallUserdata]) -> dict[str, Any]:
         "township_size_acres": loc["township_size_acres"],
         "commute": loc["commute"]["phrasing"],
         "positioning": k.building()["positioning"],
-        "note": "Any commute time is approximate; no exact distances are confirmed.",
+        "nearby": k.nearby().get("places", []),
+        "note": "Distances are APPROXIMATE directional estimates — say 'roughly'/'about', never exact.",
     }
 
 
@@ -246,10 +247,13 @@ async def get_pricing(
     return {
         "pricing": k.pricing(config),
         "indicative_only": True,
+        "price_basis": k.price_basis(),
         "disclaimer": k.commercial_disclaimer(),
         "instruction": (
             "State this as indicative / starting-from and say the team confirms the exact figure "
-            "for the specific floor, view and unit. Never present it as a final price."
+            "for the specific floor, view and unit. If asked whether it's all-inclusive, use "
+            "price_basis honestly (base price; stamp duty/GST/registration/floor-rise extra). "
+            "Never present it as a final price."
         ),
     }
 

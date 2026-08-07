@@ -94,6 +94,22 @@ def test_pricing_present_for_both_configs() -> None:
         assert "indicative_all_in" in row
 
 
+def test_nearby_places_present_and_flagged_approximate() -> None:
+    nearby = K.nearby()
+    assert len(nearby.get("places", [])) >= 5
+    assert "approximate" in nearby["note"].lower()
+    # Bavdhan should be the closest anchor from the brochure claim.
+    names = [p["place"] for p in nearby["places"]]
+    assert any("Bavdhan" in n for n in names)
+
+
+def test_price_basis_says_not_all_inclusive() -> None:
+    basis = K.price_basis()
+    assert basis
+    low = basis.lower()
+    assert "stamp duty" in low and "not" in low  # base price, extras separate
+
+
 def test_possession_present() -> None:
     poss = K.possession()
     assert poss.get("status")

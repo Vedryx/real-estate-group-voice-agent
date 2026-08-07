@@ -129,6 +129,10 @@ class CanopyKnowledge:
             "township_size_acres": self.facts["township_size_acres"],
         }
 
+    def nearby(self) -> dict[str, Any]:
+        """Approximate distances to nearby Pune landmarks (directional estimates)."""
+        return dict(self.facts.get("nearby", {}))
+
     def contact(self) -> dict[str, str]:
         return dict(self.facts["contact"])
 
@@ -166,6 +170,10 @@ class CanopyKnowledge:
 
     def payment_plan(self) -> str | None:
         return self.commercial.get("payment_plan")
+
+    def price_basis(self) -> str | None:
+        """Whether the indicative price is all-inclusive (it is not — extras listed)."""
+        return self.commercial.get("price_basis")
 
     def commercial_disclaimer(self) -> str:
         return self.commercial.get("disclaimer", "")

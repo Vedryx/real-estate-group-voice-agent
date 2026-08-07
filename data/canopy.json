@@ -16,6 +16,18 @@
     "phrasing": "about 10 minutes from Bavdhan",
     "note": "Brochure claim; always phrase as approximate. No exact distances to schools/hospitals/workplaces are confirmed."
   },
+  "nearby": {
+    "note": "APPROXIMATE directional estimates from general Pune geography, NOT the brochure or a maps API. The agent must say 'roughly' / 'about' and never a precise figure. Swap for verified drive-time data when available.",
+    "places": [
+      { "place": "Bavdhan", "approx_km": 6, "approx_drive": "about 10 minutes" },
+      { "place": "Chandni Chowk (Pune)", "approx_km": 8, "approx_drive": "about 15 minutes" },
+      { "place": "Kothrud", "approx_km": 11, "approx_drive": "about 20 minutes" },
+      { "place": "Hinjewadi IT Park", "approx_km": 19, "approx_drive": "about 35-40 minutes" },
+      { "place": "Pune city / railway station", "approx_km": 17, "approx_drive": "about 35 minutes" },
+      { "place": "Pune Airport", "approx_km": 24, "approx_drive": "about 50 minutes" },
+      { "place": "Mumbai", "approx_km": 150, "approx_drive": "about 3 hours" }
+    ]
+  },
 
   "rera_number": "P52100079518",
   "rera_reference": "R48 The Canopy",
