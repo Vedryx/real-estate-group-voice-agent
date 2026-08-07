@@ -1,15 +1,18 @@
 """Function-tool catalog for The Canopy outbound sales agent.
 
-Single project. Three knowledge layers back these tools (agent/canopy.py):
-  Layer 1 (project facts) -> get_configurations / get_unit_details /
-      get_amenities / get_location / get_specifications / get_rera
-  Layer 2 (DUMMY commercial) -> get_pricing / get_possession  (always indicative)
-  no source -> commercial_detail_unavailable  (honest gap -> callback)
+Single project, six tools (D4):
+  get_detailed_project_info(topic, config?) — one retrieval tool over all facts
+      (configs, unit_details, amenities, location, specs, pricing, possession,
+      rera). The brief covers the basics; this goes deeper.
+  request_site_visit / request_callback — the two CTAs (deterministic confirm).
+  log_terminal_outcome — terminal / catch-all lead outcome.
+  escalate_to_human — human hand-off.
+  end_call — deterministic close.
 
-Every project fact the agent speaks must come from a tool result (or the
-Layer-0 brief in the prompt), never from the model's own knowledge. Price and
-possession are DUMMY placeholder values and are always returned flagged
-indicative — never a firm figure.
+Qualification is updated outside the tool loop (state.update_qualification_from_text,
+called in the assistant's on_user_turn_completed). Every project fact the agent
+speaks comes from a tool result or the Layer-0 brief, never the model's own
+knowledge. Price/possession are DUMMY placeholders, always flagged indicative.
 """
 
 from __future__ import annotations
@@ -111,8 +114,8 @@ def _safe_log_lead(ud: CallUserdata, **kwargs: Any) -> dict[str, Any] | None:
     """Persist a lead once, converting failure into a signal instead of a crash.
 
     Deduplicates by outcome per call: the same outcome (e.g. callback_requested)
-    is never written twice, even if the model calls log_callback and then
-    log_lead for it. Returns the record on success, a {"_duplicate": True}
+    is never written twice, even if the model calls request_callback and then
+    log_terminal_outcome for it. Returns the record on success, {"_duplicate": True}
     marker if it was already logged, or None on write failure (never confirm
     success on None).
     """
@@ -151,167 +154,124 @@ def _normalize_config(config: str | None) -> str | None:
     return f"{digits} BHK" if digits else None
 
 
-# --------------------------------------------------------------------- Layer 1
+# --------------------------------------------------------------------- project facts
+ProjectTopic = Literal[
+    "overview",
+    "configurations",
+    "unit_details",
+    "amenities_building",
+    "amenities_township",
+    "location",
+    "specifications",
+    "pricing",
+    "possession",
+    "rera",
+]
+
+
 @function_tool
-async def get_configurations(context: RunContext[CallUserdata]) -> dict[str, Any]:
-    """List the home types available at The Canopy (2 BHK and 3 BHK) with carpet-size bands.
-
-    Present it conversationally — do not read out every internal layout unless
-    the caller asks for a specific one.
-    """
-    k = context.userdata.knowledge
-    return {
-        "configs": k.configs(),
-        "summary": {c: k.config_summary(c) for c in k.configs()},
-    }
-
-
-@function_tool
-async def get_unit_details(
-    context: RunContext[CallUserdata], config: Config
+async def get_detailed_project_info(
+    context: RunContext[CallUserdata],
+    topic: ProjectTopic,
+    config: Config | None = None,
 ) -> dict[str, Any]:
-    """Get carpet-area details for a config — call this ONLY when the caller asks for specific sizes/layouts, not to open a pitch.
+    """Look up a detail about The Canopy that ISN'T already in your call brief.
 
-    Speak the RERA carpet area as the size. Never quote the larger
-    "carpet + balconies" figure as carpet. Do not read out every layout — a
-    caller who just mentioned "3 BHK" wants warmth and a nudge to visit, not a
-    spec dump (see the returned note).
+    The brief already covers the basics (configs, carpet sizes, price band,
+    location, possession, amenities headline, RERA) — answer those directly. Use
+    this only to go deeper: a specific configuration's layouts/carpet, the full
+    township amenity list, the full spec sheet, the pricing breakdown, etc.
 
     Args:
-        config: "2 BHK" or "3 BHK".
+        topic: what to look up — one of overview, configurations, unit_details,
+            amenities_building, amenities_township, location, specifications,
+            pricing, possession, rera.
+        config: "2 BHK" or "3 BHK", for unit_details or pricing.
     """
     k = context.userdata.knowledge
     normalized = _normalize_config(config)
-    units = k.unit_types_for(config)
-    if not units:
-        return {
-            "found": False,
-            "message": f"No layout matches {config!r}. The Canopy has only 2 BHK and 3 BHK.",
-        }
     if normalized in CONFIG_INTERESTS:
         context.userdata.config_interest = normalized
-    carpets = sorted(u["carpet_sqft"] for u in units)
-    return {
-        "found": True,
-        "config": normalized,
-        "layout_count": len(units),
-        "carpet_sqft_range": [carpets[0], carpets[-1]],
-        "carpet_area_note": k.carpet_area_note(),
-        "layouts": [
-            {
-                "label": u["label"],
-                "carpet_sqft": u["carpet_sqft"],
-                "balcony_sqft": u["balcony_sqft"],
-                "dry_balcony_sqft": u["dry_balcony_sqft"],
+
+    if topic == "configurations":
+        return {"configs": k.configs(), "summary": {c: k.config_summary(c) for c in k.configs()}}
+
+    if topic == "unit_details":
+        units = k.unit_types_for(config) if config else k.unit_types()
+        if not units:
+            return {
+                "found": False,
+                "message": f"No layout matches {config!r}; The Canopy has only 2 BHK and 3 BHK.",
             }
-            for u in units
-        ],
-    }
+        carpets = sorted(u["carpet_sqft"] for u in units)
+        return {
+            "found": True,
+            "config": normalized,
+            "carpet_sqft_range": [carpets[0], carpets[-1]],
+            "carpet_area_note": k.carpet_area_note(),
+            "layouts": [
+                {
+                    "label": u["label"],
+                    "carpet_sqft": u["carpet_sqft"],
+                    "balcony_sqft": u["balcony_sqft"],
+                    "dry_balcony_sqft": u["dry_balcony_sqft"],
+                }
+                for u in units
+            ],
+        }
 
-
-@function_tool
-async def get_amenities(
-    context: RunContext[CallUserdata], scope: Literal["building", "township"]
-) -> dict[str, Any]:
-    """Get amenities for The Canopy.
-
-    Args:
-        scope: "building" for in-tower amenities (pool, gym, business lounge),
-            or "township" for Forest Trails amenities. Township results are
-            paid / partly under construction — say so honestly.
-    """
-    k = context.userdata.knowledge
-    if scope == "township":
-        township = k.amenities_township()
+    if topic == "amenities_township":
+        t = k.amenities_township()
         return {
             "scope": "township",
-            "amenities": township["list"],
-            "caveat": township["caveat"],
+            "amenities": t["list"],
+            "caveat": t["caveat"],
             "must_state_caveat": True,
         }
-    building = k.amenities_building()
-    return {"scope": "building", "amenities": building, "must_state_caveat": False}
 
+    if topic == "amenities_building":
+        return {"scope": "building", "amenities": k.amenities_building(), "must_state_caveat": False}
 
-@function_tool
-async def get_location(context: RunContext[CallUserdata]) -> dict[str, Any]:
-    """Where The Canopy is and how it's placed (Bhugaon, Forest Trails, approx commute)."""
-    k = context.userdata.knowledge
-    loc = k.location()
+    if topic == "location":
+        loc = k.location()
+        return {
+            "address": loc["address"],
+            "township": k.township(),
+            "township_size_acres": loc["township_size_acres"],
+            "commute": loc["commute"]["phrasing"],
+            "positioning": k.building()["positioning"],
+            "nearby": k.nearby().get("places", []),
+            "note": "Distances are APPROXIMATE directional estimates — say 'roughly', never exact.",
+        }
+
+    if topic == "specifications":
+        return {
+            "specifications": k.specifications(),
+            "note": "Brands are 'or equivalent' — present as indicative, not guaranteed.",
+        }
+
+    if topic == "pricing":
+        return {
+            "pricing": k.pricing(config),
+            "indicative_only": True,
+            "price_basis": k.price_basis(),
+            "disclaimer": k.commercial_disclaimer(),
+        }
+
+    if topic == "possession":
+        return {"possession": k.possession(), "indicative_only": True}
+
+    if topic == "rera":
+        return k.rera()
+
+    # overview / fallback
     return {
-        "address": loc["address"],
-        "township": k.township(),
-        "township_size_acres": loc["township_size_acres"],
-        "commute": loc["commute"]["phrasing"],
-        "positioning": k.building()["positioning"],
-        "nearby": k.nearby().get("places", []),
-        "note": "Distances are APPROXIMATE directional estimates — say 'roughly'/'about', never exact.",
+        "project": k.project_name(),
+        "developer": k.developer(),
+        "configs": k.configs(),
+        "location": k.location()["address"],
+        "rera": k.rera()["number"],
     }
-
-
-@function_tool
-async def get_specifications(context: RunContext[CallUserdata]) -> dict[str, Any]:
-    """Get the apartment specifications (flooring, kitchen, doors, electrical, plumbing).
-
-    Brands are indicative ("or equivalent") — never promise a specific final brand.
-    """
-    return {
-        "specifications": context.userdata.knowledge.specifications(),
-        "note": "Brands are 'or equivalent' — present as indicative, not guaranteed.",
-    }
-
-
-@function_tool
-async def get_rera(context: RunContext[CallUserdata]) -> dict[str, Any]:
-    """Get The Canopy's MahaRERA registration number and portal (share it if the caller asks)."""
-    return context.userdata.knowledge.rera()
-
-
-# --------------------------------------------------------------------- Layer 2 (DUMMY)
-@function_tool
-async def get_pricing(
-    context: RunContext[CallUserdata], config: Config | None = None
-) -> dict[str, Any]:
-    """Get the INDICATIVE price band for The Canopy. Always present as indicative, never final.
-
-    Args:
-        config: "2 BHK" or "3 BHK" to narrow; omit for both.
-    """
-    k = context.userdata.knowledge
-    normalized = _normalize_config(config)
-    if normalized in CONFIG_INTERESTS:
-        context.userdata.config_interest = normalized
-    return {
-        "pricing": k.pricing(config),
-        "indicative_only": True,
-        "price_basis": k.price_basis(),
-        "disclaimer": k.commercial_disclaimer(),
-    }
-
-
-@function_tool
-async def get_possession(context: RunContext[CallUserdata]) -> dict[str, Any]:
-    """Get the INDICATIVE possession timeline for The Canopy. Present as a target, team confirms."""
-    k = context.userdata.knowledge
-    return {
-        "possession": k.possession(),
-        "indicative_only": True,
-    }
-
-
-@function_tool
-async def commercial_detail_unavailable(
-    context: RunContext[CallUserdata], topic: str
-) -> dict[str, Any]:
-    """Use for a money/logistics detail you have NO source for (floor-rise, GST, stamp duty, maintenance, parking charges/allocation, exact availability, launch offers, exact distances).
-
-    Do not guess these — this returns that the figure is unavailable. How to respond
-    (be honest, capture a callback per the offer gate) is decided by the persona, not here.
-
-    Args:
-        topic: Short slug of what was asked, e.g. "stamp_duty" or "maintenance".
-    """
-    return {"available": False, "topic": topic}
 
 
 # --------------------------------------------------------------------- lead capture
@@ -385,51 +345,7 @@ def _derive_final_outcome(ud: CallUserdata) -> str:
 
 
 @function_tool
-async def record_lead_qualification(
-    context: RunContext[CallUserdata],
-    interest_status: InterestStatus,
-    config_interest: Config | None = None,
-    purchase_timeline: Timeline | None = None,
-    purchase_purpose: Purpose | None = None,
-) -> dict[str, Any]:
-    """Record explicit qualification signals as the caller volunteers them — do not guess.
-
-    Args:
-        interest_status: active, casual, not_interested, already_purchased, accidental_click, wrong_person, or opted_out.
-        config_interest: "2 BHK" or "3 BHK", only if stated.
-        purchase_timeline: unknown, within_3_months, 3_to_6_months, or over_6_months, only if stated.
-        purchase_purpose: unknown, self_use, or investment, only if stated.
-    """
-    if interest_status not in INTEREST_STATUSES - {"unknown"}:
-        raise ToolError(
-            f"invalid interest_status {interest_status!r}; must be one of "
-            f"{sorted(INTEREST_STATUSES - {'unknown'})}"
-        )
-    if purchase_timeline is not None and purchase_timeline not in PURCHASE_TIMELINES:
-        raise ToolError(f"invalid purchase_timeline {purchase_timeline!r}")
-    if purchase_purpose is not None and purchase_purpose not in PURCHASE_PURPOSES:
-        raise ToolError(f"invalid purchase_purpose {purchase_purpose!r}")
-
-    ud = context.userdata
-    ud.interest_status = interest_status
-    normalized = _normalize_config(config_interest)
-    if normalized in CONFIG_INTERESTS:
-        ud.config_interest = normalized
-    if purchase_timeline is not None:
-        ud.purchase_timeline = purchase_timeline
-        ud.purchase_timeline_asked = True
-    if purchase_purpose is not None:
-        ud.purchase_purpose = purchase_purpose
-
-    return {
-        "recorded": True,
-        "conversation_stage": ud.conversation_stage,
-        "qualification": ud.qualification_snapshot(),
-    }
-
-
-@function_tool
-async def schedule_site_visit(
+async def request_site_visit(
     context: RunContext[CallUserdata],
     preferred_date: str,
     name: str | None = None,
@@ -474,7 +390,7 @@ async def schedule_site_visit(
 
 
 @function_tool
-async def log_callback(
+async def request_callback(
     context: RunContext[CallUserdata],
     preferred_time: str,
     name: str | None = None,
@@ -516,7 +432,7 @@ async def log_callback(
 
 
 @function_tool
-async def log_lead(
+async def log_terminal_outcome(
     context: RunContext[CallUserdata],
     outcome: Outcome,
     name: str | None = None,
@@ -524,7 +440,7 @@ async def log_lead(
     notes: str = "",
     consent_to_be_contacted: bool = True,
 ) -> dict[str, Any]:
-    """Persist a lead outcome (terminal or catch-all). Use schedule_site_visit / log_callback for those specific CTAs instead.
+    """Persist a terminal / catch-all lead outcome (not_interested, already_purchased, wrong_number, info_only_no_lead, etc.). Use request_site_visit / request_callback for those specific CTAs instead.
 
     Args:
         outcome: One of the valid outcomes (qualified_lead, callback_requested, site_visit_requested, nurture_lead, not_interested, already_purchased, accidental_click, wrong_number, info_only_no_lead, escalation_needed, opted_out, spam_or_abandoned).
@@ -594,19 +510,10 @@ async def end_call(context: RunContext[CallUserdata]) -> str:
 
 
 ALL_TOOLS = [
-    get_configurations,
-    get_unit_details,
-    get_amenities,
-    get_location,
-    get_specifications,
-    get_rera,
-    get_pricing,
-    get_possession,
-    commercial_detail_unavailable,
-    record_lead_qualification,
-    schedule_site_visit,
-    log_callback,
-    log_lead,
+    get_detailed_project_info,
+    request_site_visit,
+    request_callback,
     escalate_to_human,
+    log_terminal_outcome,
     end_call,
 ]

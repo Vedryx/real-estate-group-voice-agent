@@ -120,6 +120,44 @@ def is_substantive_language_sample(transcript: str) -> bool:
     return len(content_tokens) >= 2 and letter_count >= 6
 
 
+def update_qualification_from_text(ud: "CallUserdata", text: str) -> None:
+    """Update qualification signals from the caller's words — a cheap, no-LLM
+    heuristic run OUTSIDE the tool-selection loop (D4). This keeps the CTA gate
+    fed even though the basics now answer straight from the brief (no tool call).
+    Conservative: only sets a signal on a clear cue.
+    """
+    if not text:
+        return
+    t = text.lower()
+
+    if any(k in t for k in ("3 bhk", "3bhk", "three bhk", "teen bhk", "तीन बीएचके", "3 बीएचके")):
+        ud.config_interest = "3 BHK"
+    elif any(k in t for k in ("2 bhk", "2bhk", "two bhk", "do bhk", "दो बीएचके", "2 बीएचके")):
+        ud.config_interest = "2 BHK"
+
+    if any(k in t for k in ("investment", "invest", "nivesh", "निवेश")):
+        ud.purchase_purpose = "investment"
+    elif any(k in t for k in ("self use", "self-use", "rehne", "khud ke", "family", "रहने")):
+        ud.purchase_purpose = "self_use"
+
+    if any(k in t for k in ("3 month", "teen mahine", "3 mahine", "jald", "turant")):
+        ud.purchase_timeline = "within_3_months"
+        ud.purchase_timeline_asked = True
+    elif any(k in t for k in ("6 month", "chhe mahine", "6 mahine")):
+        ud.purchase_timeline = "3_to_6_months"
+        ud.purchase_timeline_asked = True
+    elif any(k in t for k in ("saal", "year", "baad mein", "next year", "later")):
+        ud.purchase_timeline = "over_6_months"
+        ud.purchase_timeline_asked = True
+
+    # A concrete signal means they're genuinely engaged.
+    if (
+        ud.interest_status == "unknown"
+        and (ud.config_interest or ud.purchase_purpose != "unknown" or ud.purchase_timeline_asked)
+    ):
+        ud.interest_status = "active"
+
+
 def select_language(
     current: str | None, transcript: str, detected_language: str | None
 ) -> str | None:

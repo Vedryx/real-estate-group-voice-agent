@@ -10,6 +10,7 @@ from __future__ import annotations
 from livekit.agents import Agent, llm
 
 from agent.persona import OPENER, instructions_for_call, instructions_for_language
+from agent.state import update_qualification_from_text
 from tools.catalog import ALL_TOOLS
 
 
@@ -20,7 +21,11 @@ class CanopyAssistant(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
-        # Rebuild instructions with the Layer-0 brief + refreshed call state.
+        # D4: update qualification from the caller's words outside the tool loop,
+        # then rebuild instructions with the Layer-0 brief + refreshed call state.
+        update_qualification_from_text(
+            self.session.userdata, getattr(new_message, "text_content", "") or ""
+        )
         await self.update_instructions(instructions_for_call(self.session.userdata))
 
     async def on_enter(self) -> None:
