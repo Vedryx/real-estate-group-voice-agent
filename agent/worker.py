@@ -43,7 +43,7 @@ from livekit.agents.voice.events import (
     ErrorEvent,
     UserInputTranscribedEvent,
 )
-from livekit.plugins import noise_cancellation, sarvam, silero
+from livekit.plugins import google, noise_cancellation, sarvam, silero
 
 from agent.assistant import CanopyAssistant
 from agent.canopy import CanopyKnowledge
@@ -68,6 +68,42 @@ LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4.1-mini")  # openai/gpt-4.1-mini
 # now EMPTY = no fallback (single reliable primary). Set FALLBACK_LLM_MODEL
 # to another *reliable* model (e.g. openai/gpt-4.1) if a backstop is wanted.
 FALLBACK_LLM_MODEL = os.getenv("FALLBACK_LLM_MODEL", "").strip()
+
+# Voice pipeline mode (branch experiment):
+#   "cascade" (default) = Sarvam STT + text LLM (LLM_MODEL) + Sarvam TTS.
+#   "s2s"               = a single Gemini Live realtime model does audio-in/
+#                         audio-out, replacing all three. Needs GOOGLE_API_KEY.
+# Tools, persona and state are identical across both modes.
+VOICE_MODE = os.getenv("VOICE_MODE", "cascade").strip().lower()
+# Empty -> plugin default (gemini-2.5-flash-native-audio-preview-12-2025).
+S2S_MODEL = os.getenv("S2S_MODEL", "").strip()
+# Gemini Live prebuilt voice name (Puck/Charon/Kore/Fenrir/Aoede/...).
+S2S_VOICE = os.getenv("S2S_VOICE", "Puck").strip() or "Puck"
+
+
+def _build_realtime_llm() -> LLM:
+    """Build the Gemini Live speech-to-speech model (VOICE_MODE=s2s).
+
+    One realtime model replaces the STT+LLM+TTS trio. api_key is read from
+    GOOGLE_API_KEY (via the env) if not passed. input/output transcription is
+    enabled so the conversation still shows up as text in the turn-metrics logs.
+    """
+    from google.genai import types as genai_types
+    from livekit.plugins.google.realtime import RealtimeModel
+
+    kwargs: dict[str, Any] = {
+        "voice": S2S_VOICE,
+        "temperature": 0.8,
+        # Keep text transcripts flowing for observability + our turn logging.
+        "input_audio_transcription": genai_types.AudioTranscriptionConfig(),
+        "output_audio_transcription": genai_types.AudioTranscriptionConfig(),
+    }
+    if S2S_MODEL:
+        kwargs["model"] = S2S_MODEL
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if api_key:
+        kwargs["api_key"] = api_key
+    return RealtimeModel(**kwargs)
 
 
 def _build_llm(model: str) -> LLM:
@@ -220,87 +256,106 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.room.on("participant_connected", _on_participant_connected)
 
-    llm = _build_llm(LLM_MODEL)
-    logger.info(
-        "LLM configured: primary=%s fallback=%s",
-        LLM_MODEL,
-        FALLBACK_LLM_MODEL,
-    )
-
     def _on_llm_metrics(metrics) -> None:
-        metadata = metrics.metadata
+        metadata = getattr(metrics, "metadata", None)
         logger.info(
             "LLM request completed: model=%s provider=%s duration=%.2fs ttft=%.2fs",
-            metadata.model_name if metadata else "unknown",
-            metadata.model_provider if metadata else "unknown",
-            metrics.duration,
-            metrics.ttft,
+            getattr(metadata, "model_name", "unknown") if metadata else "unknown",
+            getattr(metadata, "model_provider", "unknown") if metadata else "unknown",
+            getattr(metrics, "duration", 0.0) or 0.0,
+            getattr(metrics, "ttft", 0.0) or 0.0,
         )
 
-    llm.on("metrics_collected", _on_llm_metrics)
+    if VOICE_MODE == "s2s":
+        # Speech-to-speech (Gemini Live): one realtime model does audio-in /
+        # audio-out, replacing the Sarvam-STT + text-LLM + Sarvam-TTS trio. No
+        # separate vad/stt/tts and no turn-detector config - the model runs its
+        # own server-side turn detection. Tools, persona and state are unchanged.
+        realtime_llm = _build_realtime_llm()
+        logger.info(
+            "VOICE MODE: s2s (Gemini Live) model=%s voice=%s",
+            S2S_MODEL or "<plugin default>",
+            S2S_VOICE,
+        )
+        try:
+            realtime_llm.on("metrics_collected", _on_llm_metrics)
+        except Exception:  # noqa: BLE001 - realtime metrics shape may differ / be absent
+            pass
+        session = AgentSession[CallUserdata](
+            userdata=userdata,
+            llm=realtime_llm,
+        )
+    else:
+        llm = _build_llm(LLM_MODEL)
+        logger.info(
+            "VOICE MODE: cascade | LLM configured: primary=%s fallback=%s",
+            LLM_MODEL,
+            FALLBACK_LLM_MODEL,
+        )
+        llm.on("metrics_collected", _on_llm_metrics)
 
-    session = AgentSession[CallUserdata](
-        userdata=userdata,
-        vad=ctx.proc.userdata["vad"],
-        stt=sarvam.STT(
-            model="saaras:v3",
-            language="unknown",  # auto-detect, incl. code-mixed Hinglish
-        ),
-        tts=sarvam.TTS(
-            model="bulbul:v3",
-            speaker="shubh",
-            # Default until a substantive final transcript selects a language.
-            target_language_code="hi-IN",
-        ),
-        llm=llm,
-        turn_handling={
-            # The v1 audio turn detector predicts end-of-turn from audio
-            # (semantic + acoustic), NOT from the transcript. A live call showed
-            # it committing on a short affirmation ("Ha, yes yes.", EOU prob 0.767
-            # > the default hi threshold ~0.575) while the caller was still mid-
-            # thought. The doc-sanctioned lever for that is unlikely_threshold
-            # (higher = more patient / needs more confidence to end the turn), NOT
-            # cranking min_delay (which fights the detector's design). Raise hi and
-            # en so the model waits for stronger EOU evidence in Indian-accented /
-            # code-mixed speech. Note: Marathi is NOT among the detector's 14
-            # supported languages, so mr-IN calls fall back to the English
-            # threshold -> "en" covers them too.
-            "turn_detection": inference.TurnDetector(
-                unlikely_threshold={"hi": 0.70, "en": 0.65},
+        session = AgentSession[CallUserdata](
+            userdata=userdata,
+            vad=ctx.proc.userdata["vad"],
+            stt=sarvam.STT(
+                model="saaras:v3",
+                language="unknown",  # auto-detect, incl. code-mixed Hinglish
             ),
-            # Endpointing back at the documented audio-detector defaults
-            # (min 0.3 / max 2.5). With the audio model giving a confident signal,
-            # these delays are meant to be short; patience comes from the
-            # threshold above. max 2.5 gives a genuinely hesitant/long utterance
-            # room before the turn is force-committed.
-            "endpointing": {
-                "mode": "dynamic",
-                "min_delay": 0.3,
-                "max_delay": 2.5,
+            tts=sarvam.TTS(
+                model="bulbul:v3",
+                speaker="shubh",
+                # Default until a substantive final transcript selects a language.
+                target_language_code="hi-IN",
+            ),
+            llm=llm,
+            turn_handling={
+                # The v1 audio turn detector predicts end-of-turn from audio
+                # (semantic + acoustic), NOT from the transcript. A live call showed
+                # it committing on a short affirmation ("Ha, yes yes.", EOU prob 0.767
+                # > the default hi threshold ~0.575) while the caller was still mid-
+                # thought. The doc-sanctioned lever for that is unlikely_threshold
+                # (higher = more patient / needs more confidence to end the turn), NOT
+                # cranking min_delay (which fights the detector's design). Raise hi and
+                # en so the model waits for stronger EOU evidence in Indian-accented /
+                # code-mixed speech. Note: Marathi is NOT among the detector's 14
+                # supported languages, so mr-IN calls fall back to the English
+                # threshold -> "en" covers them too.
+                "turn_detection": inference.TurnDetector(
+                    unlikely_threshold={"hi": 0.70, "en": 0.65},
+                ),
+                # Endpointing back at the documented audio-detector defaults
+                # (min 0.3 / max 2.5). With the audio model giving a confident signal,
+                # these delays are meant to be short; patience comes from the
+                # threshold above. max 2.5 gives a genuinely hesitant/long utterance
+                # room before the turn is force-committed.
+                "endpointing": {
+                    "mode": "dynamic",
+                    "min_delay": 0.3,
+                    "max_delay": 2.5,
+                },
+                # Keep preemptive LLM generation, but wait for the turn to be
+                # confirmed before synthesizing speech. This avoids generating
+                # audible fragments when a user pauses mid-sentence.
+                "preemptive_generation": {"preemptive_tts": False},
+                # min_duration raised from the 0.5s default: a 2026-08-03 export
+                # showed the agent's own speech getting cut off mid-sentence 3
+                # times in one call by brief filler/hesitation ("आप।", "म्हणजे")
+                # rather than a real intent to interrupt - each one left a
+                # question trailing off unfinished. 0.9s gives a bit more grace
+                # before an interruption is confirmed, while still being fast
+                # enough not to feel unresponsive to a genuine barge-in.
+                # min_words=1 additionally requires at least one real
+                # transcribed word (not just detected speech/noise) before an
+                # interruption fires - closes the same class of issue that
+                # caused the opening greeting to get cancelled by SIP call-setup
+                # noise before allow_interruptions=False was added for it.
+                "interruption": {
+                    "min_duration": 0.9,
+                    "min_words": 1,
+                    "resume_false_interruption": True,
+                },
             },
-            # Keep preemptive LLM generation, but wait for the turn to be
-            # confirmed before synthesizing speech. This avoids generating
-            # audible fragments when a user pauses mid-sentence.
-            "preemptive_generation": {"preemptive_tts": False},
-            # min_duration raised from the 0.5s default: a 2026-08-03 export
-            # showed the agent's own speech getting cut off mid-sentence 3
-            # times in one call by brief filler/hesitation ("आप।", "म्हणजे")
-            # rather than a real intent to interrupt - each one left a
-            # question trailing off unfinished. 0.9s gives a bit more grace
-            # before an interruption is confirmed, while still being fast
-            # enough not to feel unresponsive to a genuine barge-in.
-            # min_words=1 additionally requires at least one real
-            # transcribed word (not just detected speech/noise) before an
-            # interruption fires - closes the same class of issue that
-            # caused the opening greeting to get cancelled by SIP call-setup
-            # noise before allow_interruptions=False was added for it.
-            "interruption": {
-                "min_duration": 0.9,
-                "min_words": 1,
-                "resume_false_interruption": True,
-            },
-        },
-    )
+        )
 
     def _on_user_input_transcribed(event: UserInputTranscribedEvent) -> None:
         if not event.is_final:
