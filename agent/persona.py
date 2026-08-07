@@ -120,6 +120,14 @@ stray English word); mirror natural code-mixing.
 """
 
 
+# The exact opener (A1). Spoken directly via session.say() in on_enter so the
+# greeting doesn't wait on a cold first-token LLM generation (C4).
+OPENER = (
+    "Hi, main Shubham bol raha hoon, Paranjape ki taraf se. Aapne The Canopy ke liye "
+    "enquiry ki thi—abhi ek minute baat ho sakti hai?"
+)
+
+
 LANGUAGE_NAMES = {
     "hi-IN": "Hindi",
     "mr-IN": "Marathi",

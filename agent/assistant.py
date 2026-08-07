@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from livekit.agents import Agent, llm
 
-from agent.persona import instructions_for_call, instructions_for_language
+from agent.persona import OPENER, instructions_for_call, instructions_for_language
 from tools.catalog import ALL_TOOLS
 
 
@@ -24,9 +24,10 @@ class CanopyAssistant(Agent):
         await self.update_instructions(instructions_for_call(self.session.userdata))
 
     async def on_enter(self) -> None:
-        # Load the working brief + state into the prompt before the greeting.
+        # Load the working brief + state into the prompt for the turns that follow.
         await self.update_instructions(instructions_for_call(self.session.userdata))
-        # allow_interruptions=False on the opener: a zero-word noise blip during
-        # SIP call setup would otherwise cancel the greeting before it plays.
-        # Normal turns after this still allow natural barge-in.
-        self.session.generate_reply(allow_interruptions=False)
+        # C4: the opener is a FIXED line, so speak it directly via say() instead of
+        # generate_reply() — this drops the ~3-4s cold first-token LLM latency from
+        # the greeting path (only TTS cold-start remains). allow_interruptions=False
+        # keeps SIP call-setup noise from cancelling it before it plays.
+        self.session.say(OPENER, allow_interruptions=False)

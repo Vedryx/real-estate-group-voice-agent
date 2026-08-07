@@ -36,10 +36,11 @@ from livekit.agents import (
     cli,
     inference,
 )
-from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter
+from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter, LLMError
 from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.agents.voice.events import (
     ConversationItemAddedEvent,
+    ErrorEvent,
     UserInputTranscribedEvent,
 )
 from livekit.plugins import noise_cancellation, sarvam, silero
@@ -338,6 +339,19 @@ async def entrypoint(ctx: JobContext) -> None:
             )
 
     session.on("conversation_item_added", _on_conversation_item_added)
+
+    def _on_error(ev: ErrorEvent) -> None:
+        # C3: no dead air on a genuine (non-recoverable) LLM failure. The
+        # framework retries recoverable errors and fails over if a fallback
+        # model is configured; this canned line covers the case where the turn
+        # would otherwise end in silence. (STT/TTS failures can't be masked by
+        # speaking, so we only recover LLM failures.)
+        err = ev.error
+        if isinstance(err, LLMError) and not err.recoverable:
+            logger.warning("Unrecoverable LLM error; playing recovery line: %s", err.label)
+            session.say("Sorry, ek second—main detail dobara check kar raha hoon.")
+
+    session.on("error", _on_error)
 
     await session.start(
         agent=CanopyAssistant(),
