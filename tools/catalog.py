@@ -28,6 +28,7 @@ from livekit.agents.voice.speech_handle import SpeechHandle
 from agent import data_store as ds
 from agent.data_store import VALID_OUTCOMES
 from agent.escalation_agent import HumanEscalationAgent
+from agent.scheduling import IST_NAME, resolve_datetime
 from agent.state import (
     CONFIG_INTERESTS,
     INTEREST_STATUSES,
@@ -375,6 +376,9 @@ async def request_site_visit(
     kwargs = _current_lead_kwargs(ud, notes=f"Site visit requested, preferred: {preferred_date}")
     kwargs["name"] = resolved_name
     kwargs["caller_phone"] = resolved_phone
+    kwargs["preferred_datetime_raw"] = preferred_date
+    kwargs["preferred_datetime_iso"] = resolve_datetime(preferred_date)
+    kwargs["timezone_name"] = IST_NAME
     record = await _log_with_filler(
         context, ud, outcome="site_visit_requested", consent_to_be_contacted=True, **kwargs
     )
@@ -418,6 +422,9 @@ async def request_callback(
     kwargs = _current_lead_kwargs(ud, notes=note)
     kwargs["name"] = name or ud.caller_name
     kwargs["caller_phone"] = phone or ud.caller_phone
+    kwargs["preferred_datetime_raw"] = preferred_time
+    kwargs["preferred_datetime_iso"] = resolve_datetime(preferred_time)
+    kwargs["timezone_name"] = IST_NAME
     record = await _log_with_filler(
         context, ud, outcome="callback_requested", consent_to_be_contacted=True, **kwargs
     )

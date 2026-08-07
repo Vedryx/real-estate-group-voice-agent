@@ -91,7 +91,7 @@ def test_pricing_present_for_both_configs() -> None:
     assert len(K.pricing("3 BHK")) == 1
     assert K.pricing() == K.pricing(None)
     for row in K.pricing():
-        assert "indicative_all_in" in row
+        assert "indicative_base_price" in row
 
 
 def test_nearby_places_present_and_flagged_approximate() -> None:

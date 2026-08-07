@@ -53,6 +53,9 @@ def log_lead(
     qualification_status: str = "incomplete",
     lead_temperature: str = "unscored",
     qualification_reasons: list[str] | None = None,
+    preferred_datetime_raw: str | None = None,
+    preferred_datetime_iso: str | None = None,
+    timezone_name: str | None = None,
     notes: str = "",
     consent_to_be_contacted: bool = True,
     log_path: Path | None = None,
@@ -93,6 +96,11 @@ def log_lead(
         "qualification_status": qualification_status,
         "lead_temperature": lead_temperature,
         "qualification_reasons": qualification_reasons or [],
+        # E2: a visit/callback time is stored both as the caller said it and as
+        # a resolved ISO timestamp, so it stays unambiguous in the CRM later.
+        "preferred_datetime_raw": preferred_datetime_raw,
+        "preferred_datetime_iso": preferred_datetime_iso,
+        "timezone": timezone_name,
         "outcome": outcome,
         "notes": notes,
         "consent_to_be_contacted": consent_to_be_contacted,

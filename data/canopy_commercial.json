@@ -9,14 +9,14 @@
     {
       "config": "2 BHK",
       "carpet_sqft": 886,
-      "indicative_all_in": "around 95 lakh onwards",
-      "indicative_all_in_value_lakh": 95
+      "indicative_base_price": "around 95 lakh onwards",
+      "indicative_base_price_value_lakh": 95
     },
     {
       "config": "3 BHK",
       "carpet_sqft": "1229 to 1276",
-      "indicative_all_in": "around 1 crore 35 lakh onwards",
-      "indicative_all_in_value_lakh": 135
+      "indicative_base_price": "around 1 crore 35 lakh onwards",
+      "indicative_base_price_value_lakh": 135
     }
   ],
 

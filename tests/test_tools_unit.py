@@ -134,6 +134,23 @@ async def test_request_callback_records_and_confirms(ctx):
     assert ctx.userdata.callback_offered is True
 
 
+async def test_request_callback_stores_raw_and_resolved_datetime(ctx, monkeypatch):
+    captured = {}
+    real = catalog.ds.log_lead
+
+    def cap(**kw):
+        captured.update(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(catalog.ds, "log_lead", cap)
+    with pytest.raises(StopResponse):
+        await catalog.request_callback(ctx, preferred_time="kal 4 baje")
+    assert captured["preferred_datetime_raw"] == "kal 4 baje"
+    assert captured["timezone_name"] == "Asia/Kolkata"
+    iso = captured["preferred_datetime_iso"]
+    assert iso and iso.endswith("+05:30") and "T16:00:00" in iso  # tomorrow 4pm
+
+
 async def test_callback_persist_failure_returns_logged_false(ctx, monkeypatch):
     def boom(**kwargs):
         raise TypeError("Object of type MagicMock is not JSON serializable")
