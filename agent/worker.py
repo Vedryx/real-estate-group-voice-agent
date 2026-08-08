@@ -306,7 +306,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # or no usage, so the summed total can run slightly UNDER the dashboard. Good
     # for live model-vs-model + per-call comparison; dashboard stays source of
     # truth for invoicing.
-    _tok = {"in": 0, "out": 0, "in_audio": 0, "out_audio": 0, "turns": 0}
+    _tok = {"in": 0, "out": 0, "in_audio": 0, "out_audio": 0, "cached": 0, "turns": 0}
 
     def _on_metrics_collected(ev) -> None:
         # The framework re-emits ALL component metrics on the session as a
@@ -325,29 +325,34 @@ async def entrypoint(ctx: JobContext) -> None:
         out_det = getattr(metrics, "output_token_details", None)
         in_audio = getattr(in_det, "audio_tokens", 0) or 0
         out_audio = getattr(out_det, "audio_tokens", 0) or 0
+        # cached_tokens = the slice of input billed at the discounted cache rate.
+        # If this stays 0 while input balloons, implicit caching is NOT active and
+        # the fixed persona/brief is being re-billed at full price every turn.
+        cached = getattr(in_det, "cached_tokens", 0) or 0
         _tok["in"] += in_tok
         _tok["out"] += out_tok
         _tok["in_audio"] += in_audio
         _tok["out_audio"] += out_audio
+        _tok["cached"] += cached
         _tok["turns"] += 1
         logger.info(
             "LLM request completed: model=%s provider=%s duration=%.2fs ttft=%.2fs | "
-            "tokens in=%d (audio=%d) out=%d (audio=%d) total=%d",
+            "tokens in=%d (audio=%d cached=%d) out=%d (audio=%d) total=%d",
             getattr(metadata, "model_name", "unknown") if metadata else "unknown",
             getattr(metadata, "model_provider", "unknown") if metadata else "unknown",
             getattr(metrics, "duration", 0.0) or 0.0,
             getattr(metrics, "ttft", 0.0) or 0.0,
-            in_tok, in_audio, out_tok, out_audio, total,
+            in_tok, in_audio, cached, out_tok, out_audio, total,
         )
 
     async def _log_token_totals() -> None:
         logger.info(
-            "TOKEN TOTAL [mode=%s model=%s] turns=%d | input=%d (audio=%d) "
+            "TOKEN TOTAL [mode=%s model=%s] turns=%d | input=%d (audio=%d cached=%d) "
             "output=%d (audio=%d) grand_total=%d",
             VOICE_MODE,
             (S2S_MODEL or "<provider default>") if IS_S2S else LLM_MODEL,
             _tok["turns"],
-            _tok["in"], _tok["in_audio"], _tok["out"], _tok["out_audio"],
+            _tok["in"], _tok["in_audio"], _tok["cached"], _tok["out"], _tok["out_audio"],
             _tok["in"] + _tok["out"],
         )
 
