@@ -299,15 +299,50 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.room.on("participant_connected", _on_participant_connected)
 
+    # Running token totals for this call. Numbers come from the provider's own
+    # usage metadata (same source as the AI Studio / OpenAI dashboards), so they
+    # track the bill closely — but a cancelled/interrupted turn may report partial
+    # or no usage, so the summed total can run slightly UNDER the dashboard. Good
+    # for live model-vs-model + per-call comparison; dashboard stays source of
+    # truth for invoicing.
+    _tok = {"in": 0, "out": 0, "in_audio": 0, "out_audio": 0, "turns": 0}
+
     def _on_llm_metrics(metrics) -> None:
         metadata = getattr(metrics, "metadata", None)
+        in_tok = getattr(metrics, "input_tokens", 0) or 0
+        out_tok = getattr(metrics, "output_tokens", 0) or 0
+        total = getattr(metrics, "total_tokens", 0) or (in_tok + out_tok)
+        in_det = getattr(metrics, "input_token_details", None)
+        out_det = getattr(metrics, "output_token_details", None)
+        in_audio = getattr(in_det, "audio_tokens", 0) or 0
+        out_audio = getattr(out_det, "audio_tokens", 0) or 0
+        _tok["in"] += in_tok
+        _tok["out"] += out_tok
+        _tok["in_audio"] += in_audio
+        _tok["out_audio"] += out_audio
+        _tok["turns"] += 1
         logger.info(
-            "LLM request completed: model=%s provider=%s duration=%.2fs ttft=%.2fs",
+            "LLM request completed: model=%s provider=%s duration=%.2fs ttft=%.2fs | "
+            "tokens in=%d (audio=%d) out=%d (audio=%d) total=%d",
             getattr(metadata, "model_name", "unknown") if metadata else "unknown",
             getattr(metadata, "model_provider", "unknown") if metadata else "unknown",
             getattr(metrics, "duration", 0.0) or 0.0,
             getattr(metrics, "ttft", 0.0) or 0.0,
+            in_tok, in_audio, out_tok, out_audio, total,
         )
+
+    async def _log_token_totals() -> None:
+        logger.info(
+            "TOKEN TOTAL [mode=%s model=%s] turns=%d | input=%d (audio=%d) "
+            "output=%d (audio=%d) grand_total=%d",
+            VOICE_MODE,
+            (S2S_MODEL or "<provider default>") if IS_S2S else LLM_MODEL,
+            _tok["turns"],
+            _tok["in"], _tok["in_audio"], _tok["out"], _tok["out_audio"],
+            _tok["in"] + _tok["out"],
+        )
+
+    ctx.add_shutdown_callback(_log_token_totals)
 
     if IS_S2S:
         # Speech-to-speech (gemini or openai): one realtime model does audio-in /
