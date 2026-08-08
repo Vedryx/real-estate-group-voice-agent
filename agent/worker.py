@@ -38,6 +38,7 @@ from livekit.agents import (
     inference,
 )
 from livekit.agents.llm import LLM, ChatMessage, FallbackAdapter, LLMError
+from livekit.agents.metrics import LLMMetrics, RealtimeModelMetrics
 from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.agents.voice.events import (
     AgentStateChangedEvent,
@@ -307,7 +308,15 @@ async def entrypoint(ctx: JobContext) -> None:
     # truth for invoicing.
     _tok = {"in": 0, "out": 0, "in_audio": 0, "out_audio": 0, "turns": 0}
 
-    def _on_llm_metrics(metrics) -> None:
+    def _on_metrics_collected(ev) -> None:
+        # The framework re-emits ALL component metrics on the session as a
+        # MetricsCollectedEvent wrapper. Only LLM / realtime metrics carry token
+        # usage — filter to those (STT/TTS/VAD/EOU metrics have no tokens).
+        metrics = getattr(ev, "metrics", ev)
+        if not (
+            isinstance(metrics, RealtimeModelMetrics) or isinstance(metrics, LLMMetrics)
+        ):
+            return
         metadata = getattr(metrics, "metadata", None)
         in_tok = getattr(metrics, "input_tokens", 0) or 0
         out_tok = getattr(metrics, "output_tokens", 0) or 0
@@ -356,10 +365,6 @@ async def entrypoint(ctx: JobContext) -> None:
             S2S_MODEL or "<provider default>",
             S2S_VOICE,
         )
-        try:
-            realtime_llm.on("metrics_collected", _on_llm_metrics)
-        except Exception:  # noqa: BLE001 - realtime metrics shape may differ / be absent
-            pass
         session = AgentSession[CallUserdata](
             userdata=userdata,
             llm=realtime_llm,
@@ -371,7 +376,6 @@ async def entrypoint(ctx: JobContext) -> None:
             LLM_MODEL,
             FALLBACK_LLM_MODEL,
         )
-        llm.on("metrics_collected", _on_llm_metrics)
 
         session = AgentSession[CallUserdata](
             userdata=userdata,
@@ -506,6 +510,9 @@ async def entrypoint(ctx: JobContext) -> None:
                 session.say("Sorry, ek second—main detail dobara check kar raha hoon.")
 
     session.on("error", _on_error)
+    # Token usage — attach on the SESSION (the framework re-emits every
+    # component's metrics here, including realtime). Works in all modes.
+    session.on("metrics_collected", _on_metrics_collected)
 
     # Perceived agent-response latency: from the user's FINAL transcript (they've
     # stopped, words are in) to the agent starting to speak. Anchoring on the
