@@ -86,16 +86,24 @@ def log_lead(
     notes: str = "",
     consent_to_be_contacted: bool = True,
     log_path: Path | None = None,
+    project: str = "The Canopy",
+    valid_outcomes: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Append one lead record to the local JSONL store.
 
-    Single-project (The Canopy) schema — no city/BHK/developer/inventory
-    fields. Deliberately one function so a CRM/webhook swap is contained here.
+    One shared JSONL sink across verticals — deliberately one function so a
+    CRM/webhook swap is contained here. `project` tags which vertical/persona
+    a record came from (defaults to the original Canopy behavior, so existing
+    callers are unaffected). Field names (e.g. `config_interest`) are kept
+    generic on purpose: a non-real-estate vertical (e.g. tools/catalog_clinic.py)
+    reuses them for its own equivalent concept (department interest) rather
+    than growing the schema per vertical. `valid_outcomes` lets a sibling
+    vertical validate against its own outcome vocabulary instead of the
+    real-estate one below.
     """
-    if outcome not in VALID_OUTCOMES:
-        raise ValueError(
-            f"invalid outcome {outcome!r}; must be one of {sorted(VALID_OUTCOMES)}"
-        )
+    outcomes = valid_outcomes if valid_outcomes is not None else VALID_OUTCOMES
+    if outcome not in outcomes:
+        raise ValueError(f"invalid outcome {outcome!r}; must be one of {sorted(outcomes)}")
 
     # Resolved at call time (not as a bound default) so tests can monkeypatch
     # module-level LEADS_LOG_PATH to isolate their writes.
@@ -105,7 +113,7 @@ def log_lead(
     record = {
         "lead_id": str(uuid.uuid4()),
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "project": "The Canopy",
+        "project": project,
         "caller_phone": caller_phone,
         "name": name,
         "preferred_language": preferred_language,

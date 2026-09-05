@@ -124,6 +124,72 @@ async def test_request_site_visit_requires_name_and_phone(ud):
         await catalog.request_site_visit(ctx, preferred_date="Saturday")
 
 
+# --------------------------------------------------- phone validation
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("9876543210", "+919876543210"),
+        ("+91 98765 43210", "+919876543210"),
+        ("09876543210", "+919876543210"),
+        ("919876543210", "+919876543210"),
+    ],
+)
+def test_normalize_indian_phone_accepts_valid_forms(raw, expected):
+    assert catalog._normalize_indian_phone(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "1234567890",  # starts with 1 - not a valid mobile prefix
+        "987654321",  # 9 digits - too short
+        "98765432109",  # 11 digits - too long
+        "0123456789",  # starts with 0
+        "abcdefghij",  # not digits at all
+    ],
+)
+def test_normalize_indian_phone_rejects_invalid_forms(raw):
+    assert catalog._normalize_indian_phone(raw) is None
+
+
+async def test_request_site_visit_rejects_invalid_phone(ud):
+    ctx = SimpleNamespace(
+        userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None, tts=object())
+    )
+    with pytest.raises(ToolError):
+        await catalog.request_site_visit(
+            ctx, preferred_date="Saturday", name="Asha", phone="1234567890"
+        )
+    assert ctx.userdata.lead_logged is False
+
+
+async def test_request_callback_rejects_invalid_phone(ud):
+    ctx = SimpleNamespace(
+        userdata=ud, session=SimpleNamespace(say=lambda *a, **k: None, tts=object())
+    )
+    with pytest.raises(ToolError):
+        await catalog.request_callback(
+            ctx, preferred_time="evening", name="Ravi", phone="1234567890"
+        )
+    assert ctx.userdata.lead_logged is False
+
+
+async def test_request_callback_normalizes_valid_phone(ctx, monkeypatch):
+    captured = {}
+    real = catalog.ds.log_lead
+
+    def cap(**kw):
+        captured.update(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(catalog.ds, "log_lead", cap)
+    with pytest.raises(StopResponse):
+        await catalog.request_callback(
+            ctx, preferred_time="evening", name="Ravi", phone="098765 43210"
+        )
+    assert captured["caller_phone"] == "+919876543210"
+
+
 async def test_request_site_visit_records_and_confirms(ctx):
     with pytest.raises(StopResponse):
         await catalog.request_site_visit(ctx, preferred_date="this Saturday", name="Asha")

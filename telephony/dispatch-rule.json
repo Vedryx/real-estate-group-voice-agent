@@ -9,7 +9,7 @@
     "name": "The Real Estate Group - Inbound Dispatch",
     "roomConfig": {
       "agents": [
-        {"agentName": "the-real-estate-group-agent"}
+        {"agentName": "the-real-estate"}
       ]
     }
   }

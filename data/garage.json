@@ -1,0 +1,70 @@
+{
+  "_comment": "LAYER 1 — fact sheet for a FICTIONAL demo garage, 'Prime Auto Garage & Rentals'. This is not a real business; names, staff and the registration number are invented so the demo has something concrete to book against, same convention as data/canopy.json, data/clinic.json and data/salon.json. Service/rental pricing lives in garage_commercial.json (Layer 2), also dummy.",
+
+  "garage_name": "Prime Auto Garage & Rentals",
+  "garage_type": "multi-brand car service center + self-drive/chauffeur car rentals",
+  "tagline": "Your car, our care — service and rentals under one roof",
+  "address": "Plot 12, MIDC Road, Wakad, Pune 411057",
+  "registration_number": "PUNE-GARAGE-REG-2027-00512 (DEMO PLACEHOLDER — not a real registration)",
+  "contact": { "phone": "+91 20 5550 7744", "website": "www.primeautogarage-demo.in" },
+
+  "departments": ["Service", "Rental"],
+  "brands_serviced": ["Maruti Suzuki", "Hyundai", "Tata", "Mahindra", "Honda", "Toyota", "Kia", "and most other popular brands"],
+
+  "service_advisors": [
+    {
+      "id": "vikram",
+      "name": "Vikram Salunkhe",
+      "role": "Service Advisor",
+      "specialization": "General service, periodic maintenance, diagnostics",
+      "experience_years": 11,
+      "available_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    },
+    {
+      "id": "amit",
+      "name": "Amit Deshmukh",
+      "role": "Senior Technician",
+      "specialization": "AC, electrical, denting & painting",
+      "experience_years": 15,
+      "available_days": ["Monday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    }
+  ],
+
+  "service_types": [
+    "general service / periodic maintenance",
+    "oil & filter change",
+    "brake inspection & pad replacement",
+    "AC service & gas top-up",
+    "wheel alignment & balancing",
+    "battery check / replacement",
+    "denting & painting (quote after inspection)",
+    "pre-purchase inspection"
+  ],
+
+  "rental_fleet": [
+    { "category": "Hatchback", "examples": ["Swift", "i20", "Baleno"], "seats": 5, "transmission": "manual and automatic options" },
+    { "category": "Sedan", "examples": ["Honda City", "Verna"], "seats": 5, "transmission": "manual and automatic options" },
+    { "category": "SUV", "examples": ["Creta", "XUV700"], "seats": "5 to 7", "transmission": "mostly automatic" }
+  ],
+
+  "rental_terms": {
+    "documents_required": "A valid driving license and one government photo ID (Aadhaar/Passport) — verified AT PICKUP, never collected or noted down over a phone call.",
+    "security_deposit": "A refundable security deposit is required, amount varies by car category — the team confirms the exact figure at booking.",
+    "fuel_policy": "Same-to-same — return the car with the same fuel level as at pickup.",
+    "self_drive_or_chauffeur": "Both self-drive and with-chauffeur options are available.",
+    "minimum_age": "Minimum 21 years old with at least 1 year of driving experience, for self-drive rentals."
+  },
+
+  "timings": {
+    "service": "Mon-Sat, 9:00 AM - 7:00 PM",
+    "rental_pickup_drop": "Mon-Sat, 9:00 AM - 7:00 PM (outside these hours needs prior arrangement)",
+    "closed": "Sunday"
+  },
+
+  "roadside_note": "This garage does not run a 24x7 roadside/towing dispatch. A caller describing an ONGOING breakdown or accident on the road right now should be told to contact a roadside assistance/towing service or their insurer's helpline immediately — never offered a routine service slot for an active roadside emergency.",
+
+  "estimate_note": "Any repair cost quoted over the phone is a ROUGH estimate only. The exact cost is confirmed after the technician physically inspects the vehicle — never promise a final bill over the phone.",
+
+  "media_caveat": "Photos of the workshop and rental fleet online are illustrative; the exact vehicle assigned may vary by availability on the day.",
+  "legal_caveat": "This garage does not provide a binding repair quote or rental confirmation over the phone. Exact service cost is confirmed after inspection; exact rental availability and final terms are confirmed by the team before pickup. Prices here are indicative only."
+}

@@ -1,0 +1,25 @@
+{
+  "_comment": "LAYER 2 — service and rental pricing for the FICTIONAL Prime Auto Garage & Rentals demo. DUMMY / PLACEHOLDER values only. Mirrors data/canopy_commercial.json's is_dummy convention. The agent must ALWAYS speak these as indicative, confirmed by the team — never as a final bill or confirmed rental rate.",
+
+  "source": "DUMMY_PLACEHOLDER",
+  "is_dummy": true,
+  "currency": "INR",
+
+  "fees": [
+    { "service": "General service / periodic maintenance", "department": "Service", "indicative_fee": "around ₹1,500 to 3,500 (labour + basic consumables; parts extra)" },
+    { "service": "Oil & filter change", "department": "Service", "indicative_fee": "around ₹800 to 1,500, depending on oil grade" },
+    { "service": "Brake pad replacement (per axle)", "department": "Service", "indicative_fee": "around ₹1,500 to 3,000" },
+    { "service": "AC service & gas top-up", "department": "Service", "indicative_fee": "around ₹1,200 to 2,500" },
+    { "service": "Wheel alignment & balancing", "department": "Service", "indicative_fee": "around ₹600 to 1,200" },
+    { "service": "Denting & painting", "department": "Service", "indicative_fee": "quote given only after inspection" },
+    { "service": "Hatchback rental", "department": "Rental", "indicative_fee": "around ₹1,200 to 1,800 per day" },
+    { "service": "Sedan rental", "department": "Rental", "indicative_fee": "around ₹2,000 to 2,800 per day" },
+    { "service": "SUV rental", "department": "Rental", "indicative_fee": "around ₹3,200 to 4,500 per day" }
+  ],
+
+  "fee_basis": "Service costs depend on the exact vehicle model, parts needed, and labour — the team confirms the final bill after inspection. Rental rates depend on duration (daily/weekly/monthly rates differ) and self-drive vs chauffeur.",
+  "deposit_note": "The rental security deposit is separate from the daily rate and is refunded after the vehicle is returned in good condition, minus any damage or fuel-policy deductions.",
+  "payment_note": "Cash, card and UPI are accepted at the garage. Card/UPI/payment details are never collected over a phone call.",
+
+  "disclaimer": "Indicative only. Exact service cost is confirmed after physical inspection; exact rental rate and availability are confirmed by the team before pickup. Never quote either as final over the phone."
+}

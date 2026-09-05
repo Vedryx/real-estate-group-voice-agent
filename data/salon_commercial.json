@@ -1,0 +1,29 @@
+{
+  "_comment": "LAYER 2 — service pricing for the FICTIONAL Aura Salon & Spa demo. DUMMY / PLACEHOLDER values only. Mirrors data/canopy_commercial.json's is_dummy convention. The agent must ALWAYS speak these as indicative, confirmed by the front desk — never as a final bill.",
+
+  "source": "DUMMY_PLACEHOLDER",
+  "is_dummy": true,
+  "currency": "INR",
+
+  "fees": [
+    { "service": "Haircut", "department": "Hair", "indicative_fee": "around ₹500 to 900" },
+    { "service": "Hair color (root touch-up)", "department": "Hair", "indicative_fee": "around ₹1,500 to 2,500" },
+    { "service": "Hair color (global)", "department": "Hair", "indicative_fee": "around ₹2,500 to 4,500" },
+    { "service": "Keratin / smoothening treatment", "department": "Hair", "indicative_fee": "around ₹4,000 to 8,000" },
+    { "service": "Hair spa", "department": "Hair", "indicative_fee": "around ₹1,200 to 2,000" },
+    { "service": "Basic facial", "department": "Skin", "indicative_fee": "around ₹900 to 1,500" },
+    { "service": "Advanced/anti-tan facial", "department": "Skin", "indicative_fee": "around ₹1,800 to 3,000" },
+    { "service": "Threading (eyebrow)", "department": "Skin", "indicative_fee": "around ₹60" },
+    { "service": "Full arms/legs waxing", "department": "Skin", "indicative_fee": "around ₹800 to 1,200" },
+    { "service": "Manicure", "department": "Nails", "indicative_fee": "around ₹500" },
+    { "service": "Pedicure", "department": "Nails", "indicative_fee": "around ₹700" },
+    { "service": "Gel polish", "department": "Nails", "indicative_fee": "around ₹900" },
+    { "service": "Party makeup", "department": "Makeup", "indicative_fee": "around ₹2,500 to 4,500" },
+    { "service": "Bridal makeup", "department": "Makeup", "indicative_fee": "on consultation only — varies by package" }
+  ],
+
+  "fee_basis": "Fees are indicative and vary by hair/skin length, product used, and stylist seniority; the front desk confirms the final amount. Bridal makeup has no fixed price without a consultation.",
+  "payment_note": "Cash, card and UPI are accepted at the salon. Card/UPI/payment details are never collected over a phone call.",
+
+  "disclaimer": "Indicative only. Exact price depends on hair length/thickness, product brand used, and the specific stylist, confirmed at the visit — never quote a fee as final over the phone."
+}
