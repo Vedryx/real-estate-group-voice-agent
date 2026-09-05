@@ -1,0 +1,94 @@
+{
+  "_comment": "LAYER 1 — fact sheet for a FICTIONAL demo salon, 'Aura Salon & Spa'. This is not a real salon; names, stylists and the registration number are invented so the demo has something concrete to book appointments against, same convention as data/canopy.json and data/clinic.json. Service prices live in salon_commercial.json (Layer 2), also dummy.",
+
+  "salon_name": "Aura Salon & Spa",
+  "salon_type": "unisex salon & spa (Hair, Skin, Nails, Makeup)",
+  "tagline": "Look good, feel radiant",
+  "address": "Shop 4, Sky Vista Mall, Viman Nagar, Pune 411014",
+  "registration_number": "PUNE-SALON-REG-2027-00734 (DEMO PLACEHOLDER — not a real registration)",
+  "contact": { "phone": "+91 20 5550 9988", "website": "www.aurasalonspa-demo.in" },
+
+  "departments": ["Hair", "Skin", "Nails", "Makeup"],
+  "stylists": [
+    {
+      "id": "ritu",
+      "name": "Ritu Kapoor",
+      "department": "Hair",
+      "specialization": "Senior hair stylist — cutting, coloring, keratin/smoothening",
+      "experience_years": 12,
+      "available_days": ["Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    },
+    {
+      "id": "sana",
+      "name": "Sana Sheikh",
+      "department": "Skin",
+      "specialization": "Skin & beauty specialist — facials, cleanups, threading, waxing",
+      "experience_years": 8,
+      "available_days": ["Tuesday", "Wednesday", "Friday", "Saturday", "Sunday"]
+    },
+    {
+      "id": "priyanka",
+      "name": "Priyanka Rao",
+      "department": "Nails",
+      "specialization": "Nail technician — manicure, pedicure, nail art",
+      "experience_years": 6,
+      "available_days": ["Tuesday", "Thursday", "Saturday", "Sunday"]
+    },
+    {
+      "id": "farah",
+      "name": "Farah Ansari",
+      "department": "Makeup",
+      "specialization": "Makeup artist — party and bridal makeup (bridal is by consultation only)",
+      "experience_years": 9,
+      "available_days": ["Wednesday", "Friday", "Saturday", "Sunday"]
+    }
+  ],
+
+  "services": {
+    "Hair": [
+      "haircut",
+      "hair wash & blow-dry",
+      "hair color (global/root touch-up)",
+      "highlights",
+      "keratin / smoothening treatment",
+      "hair spa"
+    ],
+    "Skin": [
+      "basic facial",
+      "advanced/anti-tan facial",
+      "cleanup",
+      "threading (eyebrow/upper lip)",
+      "full arms/legs waxing"
+    ],
+    "Nails": [
+      "manicure",
+      "pedicure",
+      "gel polish",
+      "nail art (add-on)"
+    ],
+    "Makeup": [
+      "party makeup",
+      "bridal makeup (consultation required first)",
+      "saree draping (add-on)"
+    ]
+  },
+
+  "timings": {
+    "general": "Tue-Sun, 10:00 AM - 8:00 PM",
+    "closed": "Monday",
+    "note": "Timings are per the current schedule; a specific stylist's exact slot is confirmed by the front desk, not guaranteed here."
+  },
+
+  "appointment_policy": "Appointments are preferred, especially for color/keratin services and bridal makeup; walk-ins are accepted for quick services (haircut, threading) subject to same-day availability. A requested slot is NOT confirmed until the front desk calls back to confirm — never tell a caller their exact time is booked.",
+
+  "patch_test_note": "For any FIRST-TIME hair color, keratin, or henna service, a patch test 48 hours before the appointment is recommended to check for allergic reaction — the agent should mention this once when a first-time chemical service is discussed, not as a blanket disclaimer on every call.",
+
+  "results_disclaimer": "Hair color results, keratin/smoothening outcomes, and skin treatment results vary by individual hair/skin type and cannot be guaranteed exactly as shown in photos or references — the stylist discusses realistic expectations in person.",
+
+  "bridal_note": "Bridal makeup bookings require an in-person consultation and trial session first — a phone booking alone does not confirm a bridal date. Route bridal enquiries to a consultation appointment, not a direct booking.",
+
+  "membership_note": "A loyalty/membership card offering discounts on repeat visits exists, but the agent should not quote a specific discount percentage unless it's in the data — route exact membership benefits to the front desk.",
+
+  "media_caveat": "Salon photos and stylist portfolio images online are illustrative of past work, not a guarantee of an identical result for every client.",
+  "legal_caveat": "This salon does not provide medical or dermatological advice over the phone. Any skin/scalp condition, allergy history, or medical concern should be discussed with the stylist in person before a chemical service. Prices and availability are indicative and confirmed by the front desk."
+}

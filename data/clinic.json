@@ -1,0 +1,68 @@
+{
+  "_comment": "LAYER 1 — fact sheet for a FICTIONAL demo clinic, 'Wellness Point Clinic'. This is not a real clinic; names, doctors and the registration number are invented so the demo has something concrete to book appointments against, same convention as data/canopy.json. Consultation fees live in clinic_commercial.json (Layer 2), also dummy. Every fact the agent speaks (doctor, timing, service, fee, registration) must trace to a field here.",
+
+  "clinic_name": "Wellness Point Clinic",
+  "clinic_type": "multi-specialty (General Medicine + Dental)",
+  "tagline": "Caring for your health, close to home",
+  "address": "2nd Floor, Sunrise Arcade, Baner Road, Baner, Pune 411045",
+  "registration_number": "PUNE-CLINIC-REG-2027-00891 (DEMO PLACEHOLDER — not a real clinic registration)",
+  "contact": { "phone": "+91 20 5550 1122", "website": "www.wellnesspointclinic-demo.in" },
+
+  "departments": ["General Medicine", "Dental"],
+  "doctors": [
+    {
+      "id": "dr-mehta",
+      "name": "Dr. Anjali Mehta",
+      "department": "General Medicine",
+      "qualification": "MBBS, MD (General Medicine)",
+      "experience_years": 14,
+      "available_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+      "note": "Sees general medicine, fever/infection, lifestyle diseases (diabetes/BP) follow-ups, and general health checkups."
+    },
+    {
+      "id": "dr-khan",
+      "name": "Dr. Imran Khan",
+      "department": "Dental",
+      "qualification": "BDS, MDS (Orthodontics)",
+      "experience_years": 10,
+      "available_days": ["Monday", "Wednesday", "Thursday", "Friday", "Saturday"],
+      "note": "Sees general dental (checkup, cleaning, filling, extraction) and orthodontic consultations (braces/aligners)."
+    }
+  ],
+
+  "services": {
+    "General Medicine": [
+      "general consultation",
+      "fever and infection management",
+      "diabetes and blood pressure follow-up",
+      "general health checkup package",
+      "vaccination (select vaccines)"
+    ],
+    "Dental": [
+      "dental checkup",
+      "teeth cleaning (scaling)",
+      "cavity filling",
+      "tooth extraction",
+      "root canal treatment",
+      "orthodontic consultation (braces/aligners)"
+    ]
+  },
+
+  "timings": {
+    "General Medicine": "Mon-Sat, 10:00 AM - 1:00 PM and 5:00 PM - 8:00 PM",
+    "Dental": "Mon-Sat (except Tuesday), 10:00 AM - 2:00 PM and 4:00 PM - 7:00 PM",
+    "closed": "Sunday and public holidays",
+    "note": "Timings are per the current schedule and may vary by doctor's availability on a given day — front desk confirms the exact slot."
+  },
+
+  "appointment_policy": "Appointments are preferred; walk-ins are accepted subject to same-day availability. A requested slot is NOT confirmed until the front desk calls back to confirm — never tell a caller their exact time is booked.",
+
+  "emergency_note": "This clinic does not handle medical emergencies. For chest pain, severe bleeding, breathing difficulty, or any life-threatening symptom, the caller must be told to call an ambulance / go to the nearest emergency room immediately — never attempt to schedule a routine appointment for an emergency.",
+
+  "insurance_note": "Cashless treatment is accepted for a few select insurance/TPA providers; coverage varies by plan and procedure. The agent must not confirm cashless eligibility itself — only note the caller's insurer and have the front desk verify.",
+
+  "new_patient_note": "New patients are asked to arrive 15 minutes early for basic registration (name, age, contact, brief medical history). No documents are collected over the phone.",
+
+  "media_caveat": "Clinic photos on the website are illustrative, not necessarily the exact current interior.",
+  "legal_caveat": "This clinic does not provide medical advice or diagnosis over the phone. All clinical questions, symptom assessment, and treatment decisions are made by the doctor in person. Fees and availability are indicative and confirmed by the front desk."
+}

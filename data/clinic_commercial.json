@@ -1,0 +1,23 @@
+{
+  "_comment": "LAYER 2 — consultation fee data for the FICTIONAL Wellness Point Clinic demo. DUMMY / PLACEHOLDER values only. Mirrors data/canopy_commercial.json's is_dummy convention. The agent must ALWAYS speak these as indicative, confirmed by the front desk — never as a final bill.",
+
+  "source": "DUMMY_PLACEHOLDER",
+  "is_dummy": true,
+  "currency": "INR",
+
+  "fees": [
+    { "service": "General consultation", "department": "General Medicine", "indicative_fee": "around ₹500" },
+    { "service": "General health checkup package", "department": "General Medicine", "indicative_fee": "around ₹1,500" },
+    { "service": "Dental checkup", "department": "Dental", "indicative_fee": "around ₹300" },
+    { "service": "Teeth cleaning (scaling)", "department": "Dental", "indicative_fee": "around ₹1,200" },
+    { "service": "Cavity filling", "department": "Dental", "indicative_fee": "around ₹800 to 1,500 per tooth" },
+    { "service": "Tooth extraction", "department": "Dental", "indicative_fee": "around ₹1,000 to 2,500" },
+    { "service": "Root canal treatment", "department": "Dental", "indicative_fee": "around ₹4,000 to 8,000 per tooth" },
+    { "service": "Orthodontic consultation", "department": "Dental", "indicative_fee": "around ₹300 (adjusted against treatment if started)" }
+  ],
+
+  "fee_basis": "Fees are indicative and vary by exact procedure complexity and materials used; the front desk / doctor confirms the final amount. Follow-up visits within the same treatment course may be charged differently.",
+  "payment_note": "Cash, card and UPI are accepted at the clinic. Card/UPI/payment details are never collected over a phone call.",
+
+  "disclaimer": "Indicative only. Exact fees depend on the specific procedure, materials, and doctor's assessment at the visit, and are confirmed by the front desk — never quote a fee as final over the phone."
+}

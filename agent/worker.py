@@ -48,14 +48,56 @@ from livekit.agents.voice.events import (
 )
 from livekit.plugins import google, noise_cancellation, sarvam, silero
 
-from agent.assistant import CanopyAssistant
-from agent.canopy import CanopyKnowledge
-from agent.persona import instructions_for_call
-from agent.state import CallUserdata, select_language
+from agent.state import select_language
 
 load_dotenv()
 
-logger = logging.getLogger("The Canopy")
+# VERTICAL selects which persona/knowledge/tools this worker runs — "canopy"
+# (default, outbound real-estate sales), "clinic" (inbound clinic-appointment
+# receptionist), "salon" (inbound salon-appointment receptionist), or
+# "garage" (inbound auto-garage receptionist: car service + car rental). All
+# India/Hindi-Marathi-English audiences. Each vertical is a self-contained
+# set of files (agent/<vertical>.py knowledge, agent/persona_<vertical>.py,
+# agent/assistant_<vertical>.py, agent/escalation_agent_<vertical>.py,
+# tools/catalog_<vertical>.py, data/<vertical>*.json) — adding another
+# vertical means adding one more branch here, not touching the others.
+VERTICAL = os.getenv("VERTICAL", "canopy").strip().lower()
+if VERTICAL == "clinic":
+    from agent.assistant_clinic import ClinicAssistant as VerticalAssistant
+    from agent.clinic import ClinicKnowledge as VerticalKnowledge
+    from agent.persona_clinic import instructions_for_call as vertical_instructions_for_call
+    from agent.state_clinic import ClinicCallUserdata as VerticalUserdata
+elif VERTICAL == "salon":
+    from agent.assistant_salon import SalonAssistant as VerticalAssistant
+    from agent.salon import SalonKnowledge as VerticalKnowledge
+    from agent.persona_salon import instructions_for_call as vertical_instructions_for_call
+    from agent.state_salon import SalonCallUserdata as VerticalUserdata
+elif VERTICAL == "garage":
+    from agent.assistant_garage import GarageAssistant as VerticalAssistant
+    from agent.garage import GarageKnowledge as VerticalKnowledge
+    from agent.persona_garage import instructions_for_call as vertical_instructions_for_call
+    from agent.state_garage import GarageCallUserdata as VerticalUserdata
+else:
+    from agent.assistant import CanopyAssistant as VerticalAssistant
+    from agent.canopy import CanopyKnowledge as VerticalKnowledge
+    from agent.persona import instructions_for_call as vertical_instructions_for_call
+    from agent.state import CallUserdata as VerticalUserdata
+
+_VERTICAL_LOGGER_NAMES = {
+    "clinic": "Wellness Point Clinic",
+    "salon": "Aura Salon & Spa",
+    "garage": "Prime Auto Garage & Rentals",
+}
+logger = logging.getLogger(_VERTICAL_LOGGER_NAMES.get(VERTICAL, "The Canopy"))
+
+# Cascade-mode Sarvam TTS voice/default-language, per vertical. Canopy keeps
+# its tuned Hindi voice ("shubh"/hi-IN); clinic uses "priya", salon uses
+# "kavya" (both bulbul:v3 female voices), garage uses "rahul" (a bulbul:v3
+# male voice, matching Karan's gender) — all at the same hi-IN default (all
+# verticals are India/Hindi-Marathi-English audiences).
+_VERTICAL_TTS_SPEAKERS = {"clinic": "priya", "salon": "kavya", "garage": "rahul"}
+CASCADE_TTS_SPEAKER = _VERTICAL_TTS_SPEAKERS.get(VERTICAL, "shubh")
+CASCADE_TTS_DEFAULT_LANGUAGE = "hi-IN"
 
 # The LLM only ever reasons in text - Sarvam handles the voice ends - so
 # its own Hindi/Marathi fluency matters less than tool-calling reliability
@@ -244,7 +286,7 @@ def _metric_seconds(metrics: dict, key: str) -> float | None:
     return round(value, 3) if isinstance(value, (int, float)) else None
 
 
-def _guard_commercial_data(knowledge: CanopyKnowledge) -> None:
+def _guard_commercial_data(knowledge) -> None:
     """E3: never let DUMMY commercial data reach a real caller.
 
     Hard-block startup in production; otherwise log a loud demo-mode banner.
@@ -254,8 +296,8 @@ def _guard_commercial_data(knowledge: CanopyKnowledge) -> None:
     env = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development")).strip().lower()
     if env in ("production", "prod"):
         raise RuntimeError(
-            "Production startup blocked: dummy Canopy commercial data is active. "
-            "Replace data/canopy_commercial.json with the real cost sheet before going live."
+            f"Production startup blocked: dummy {VERTICAL} commercial data is active. "
+            "Replace the commercial data file with the real cost sheet before going live."
         )
     logger.warning("DEMO MODE — DUMMY COMMERCIAL DATA (price/possession are placeholders)")
 
@@ -263,12 +305,12 @@ def _guard_commercial_data(knowledge: CanopyKnowledge) -> None:
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
-    knowledge = CanopyKnowledge.load()
+    knowledge = VerticalKnowledge.load()
     _guard_commercial_data(knowledge)
     lead_context = _extract_outbound_lead_context(
         ctx.job.metadata, getattr(ctx.job, "attributes", None)
     )
-    userdata = CallUserdata(knowledge=knowledge, **lead_context)
+    userdata = VerticalUserdata(knowledge=knowledge, **lead_context)
     logger.info(
         "Outbound lead context loaded: source=%s campaign=%s project_supplied=%s",
         userdata.source_channel or "unknown",
@@ -370,7 +412,7 @@ async def entrypoint(ctx: JobContext) -> None:
             S2S_MODEL or "<provider default>",
             S2S_VOICE,
         )
-        session = AgentSession[CallUserdata](
+        session = AgentSession[VerticalUserdata](
             userdata=userdata,
             llm=realtime_llm,
         )
@@ -382,7 +424,7 @@ async def entrypoint(ctx: JobContext) -> None:
             FALLBACK_LLM_MODEL,
         )
 
-        session = AgentSession[CallUserdata](
+        session = AgentSession[VerticalUserdata](
             userdata=userdata,
             vad=ctx.proc.userdata["vad"],
             stt=sarvam.STT(
@@ -391,9 +433,9 @@ async def entrypoint(ctx: JobContext) -> None:
             ),
             tts=sarvam.TTS(
                 model="bulbul:v3",
-                speaker="shubh",
+                speaker=CASCADE_TTS_SPEAKER,
                 # Default until a substantive final transcript selects a language.
-                target_language_code="hi-IN",
+                target_language_code=CASCADE_TTS_DEFAULT_LANGUAGE,
             ),
             llm=llm,
             turn_handling={
@@ -547,10 +589,10 @@ async def entrypoint(ctx: JobContext) -> None:
     # agent never calls update_instructions() before the realtime session is
     # active (which would reconnect and time out the opener). Cascade builds them
     # per turn in on_enter/on_user_turn_completed.
-    s2s_instructions = instructions_for_call(userdata) if IS_S2S else None
+    s2s_instructions = vertical_instructions_for_call(userdata) if IS_S2S else None
 
     await session.start(
-        agent=CanopyAssistant(s2s_instructions),
+        agent=VerticalAssistant(s2s_instructions),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             # Telephony-tuned Krisp noise cancellation - real phone calls

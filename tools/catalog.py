@@ -28,6 +28,7 @@ from livekit.agents.voice.speech_handle import SpeechHandle
 from agent import data_store as ds
 from agent.data_store import VALID_OUTCOMES
 from agent.escalation_agent import HumanEscalationAgent
+from agent.phone import normalize_indian_phone as _normalize_indian_phone
 from agent.scheduling import IST_NAME, resolve_datetime
 from agent.state import (
     CONFIG_INTERESTS,
@@ -402,6 +403,13 @@ async def request_site_visit(
         raise ToolError("A caller name is required before saving a site-visit request.")
     if not resolved_phone:
         raise ToolError("A callback number is required before saving a site-visit request.")
+    normalized_phone = _normalize_indian_phone(resolved_phone)
+    if normalized_phone is None:
+        raise ToolError(
+            f"{resolved_phone!r} is not a valid Indian mobile number (10 digits, starting "
+            "6-9). Ask the caller to repeat their number, then call this again."
+        )
+    resolved_phone = normalized_phone
 
     ud.next_step = "site_visit_requested"
     ud.closing_attempted = True
@@ -447,6 +455,15 @@ async def request_callback(
     ud = context.userdata
     if name:
         ud.caller_name = name
+    resolved_phone = phone or ud.caller_phone
+    if resolved_phone:
+        normalized_phone = _normalize_indian_phone(resolved_phone)
+        if normalized_phone is None:
+            raise ToolError(
+                f"{resolved_phone!r} is not a valid Indian mobile number (10 digits, starting "
+                "6-9). Ask the caller to repeat their number, then call this again."
+            )
+        resolved_phone = normalized_phone
     ud.next_step = "callback_requested"
     ud.closing_attempted = True
     ud.callback_offered = True
@@ -456,7 +473,7 @@ async def request_callback(
         note = f"{note}. {notes}"
     kwargs = _current_lead_kwargs(ud, notes=note)
     kwargs["name"] = name or ud.caller_name
-    kwargs["caller_phone"] = phone or ud.caller_phone
+    kwargs["caller_phone"] = resolved_phone
     kwargs["preferred_datetime_raw"] = preferred_time
     kwargs["preferred_datetime_iso"] = resolve_datetime(preferred_time)
     kwargs["timezone_name"] = IST_NAME
